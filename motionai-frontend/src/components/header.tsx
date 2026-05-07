@@ -15,50 +15,6 @@ export default function Header() {
               MotionAI
             </span>
           </Link>
-
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-muted-foreground">
-            <Link
-              href="/explore"
-              className="transition-colors hover:text-foreground"
-            >
-              Explore
-            </Link>
-            <Link
-              href="/apps"
-              className="transition-colors hover:text-foreground"
-            >
-              Apps
-            </Link>
-            <Link
-              href="/image"
-              className="transition-colors hover:text-foreground"
-            >
-              Image
-            </Link>
-            <Link
-              href="/video"
-              className="transition-colors hover:text-foreground"
-            >
-              Video
-            </Link>
-            <Link
-              href="/audio"
-              className="transition-colors hover:text-foreground"
-            >
-              Audio
-            </Link>
-            <div className="flex items-center gap-1.5">
-              <Link
-                href="/agent"
-                className="transition-colors hover:text-foreground"
-              >
-                Agent
-              </Link>
-              <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary uppercase tracking-wider">
-                Beta
-              </span>
-            </div>
-          </nav>
         </div>
 
         <div className="flex items-center gap-6">
