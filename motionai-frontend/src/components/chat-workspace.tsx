@@ -446,6 +446,10 @@ export function ChatWorkspace() {
     jobStatus.status === "creating" ||
     jobStatus.status === "queued" ||
     jobStatus.status === "rendering";
+  const showRenderingPlaceholder =
+    jobStatus.status === "creating" ||
+    jobStatus.status === "queued" ||
+    jobStatus.status === "rendering";
   const canEditCurrentProject = !project?.user_id || project.user_id === user?.id;
   const accessRestrictionMessage =
     !user && project?.user_id
@@ -574,7 +578,6 @@ export function ChatWorkspace() {
 
       const latestStatus = event.latestJobStatus;
       if (!latestStatus) {
-        setJobStatus({ status: "idle" });
       } else if (latestStatus.status === "queued") {
         setJobStatus({
           jobId: latestStatus.jobId,
@@ -988,8 +991,7 @@ export function ChatWorkspace() {
             What do you want to create?
           </h1>
           <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
-            Start with a prompt, then continue in the full chat while MotionAI
-            streams progress and delivers the finished video in place.
+            Turn ideas into stunning infographic and animation videos in seconds. Our AI-powered SaaS transforms simple prompts into professional, engaging visual stories.
           </p>
         </div>
 
@@ -1166,60 +1168,6 @@ export function ChatWorkspace() {
           </div>
         </div>
 
-        {user && (
-          <div className="mt-8 w-full max-w-3xl animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 fill-mode-both">
-            <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
-              <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <FolderClock className="h-5 w-5" />
-                  Saved Projects
-                </CardTitle>
-                <CardDescription>
-                  Open a previous render or start something new. MotionAI keeps saving while you&apos;re signed in.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isHistoryLoading ? (
-                  <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading your projects…
-                  </div>
-                ) : historyError ? (
-                  <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
-                    {historyError}
-                  </div>
-                ) : savedProjects.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
-                    Create a project to get started.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {savedProjects.slice(0, 4).map((savedProject) => (
-                      <button
-                        key={savedProject.id}
-                        type="button"
-                        onClick={() => openProject(savedProject.id)}
-                        className="flex w-full items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-foreground">
-                            {savedProject.title}
-                          </div>
-                          <div className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                            {savedProject.style} · {savedProject.duration}s · {savedProject.resolution}
-                          </div>
-                        </div>
-                        <div className="shrink-0 text-xs text-muted-foreground">
-                          {formatProjectTimestamp(savedProject.updated_at)}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
       </main>
     );
   }
@@ -1317,6 +1265,20 @@ export function ChatWorkspace() {
                   </div>
                 );
               })}
+
+              {showRenderingPlaceholder && (
+                <div className="flex items-start gap-3">
+                  <Avatar className="mt-1">
+                    <AvatarFallback>AI</AvatarFallback>
+                  </Avatar>
+                  <div className="max-w-[85%] space-y-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 shadow-sm">
+                    <div className="flex items-center gap-3 text-sm leading-6 text-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      <span>Generating your video preview. This may take a few moments.</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {displayError && (
                 <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -1473,68 +1435,6 @@ export function ChatWorkspace() {
             </CardContent>
           </Card>
 
-          <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <FolderClock className="h-5 w-5 text-foreground" />
-                Saved Projects
-              </CardTitle>
-              <CardDescription>
-                {user
-                  ? "Everything you create while signed in lands here automatically."
-                  : "Sign in from the header to sync and revisit your project history."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {!user ? (
-                <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
-                  Guest creation is still available. Signing in simply adds saved history on top.
-                </div>
-              ) : isHistoryLoading ? (
-                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Syncing your projects…
-                </div>
-              ) : historyError ? (
-                <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
-                  {historyError}
-                </div>
-              ) : savedProjects.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
-                  Your signed-in project history will appear here after the first saved render.
-                </div>
-              ) : (
-                savedProjects.map((savedProject) => {
-                  const isActiveProject = savedProject.id === projectId;
-
-                  return (
-                    <button
-                      key={savedProject.id}
-                      type="button"
-                      onClick={() => openProject(savedProject.id)}
-                      className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-4 text-left transition ${
-                        isActiveProject
-                          ? "border-white/25 bg-white/[0.08]"
-                          : "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-foreground">
-                          {savedProject.title}
-                        </div>
-                        <div className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          {savedProject.style} · {savedProject.duration}s · {savedProject.resolution}
-                        </div>
-                      </div>
-                      <div className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatProjectTimestamp(savedProject.updated_at)}
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </CardContent>
-          </Card>
 
         </div>
       </div>

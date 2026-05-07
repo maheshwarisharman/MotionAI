@@ -78,6 +78,10 @@ Rules:
 - fontStyle must be one of: "sans-serif", "monospace", "serif", "display".
 - keyScenes must map the animation duration with each scene having a unique startSecond.
 - If reference images are provided, preserve their subject identity and visual cues in the brief.
+- Output VALID JSON ONLY.
+- Never truncate the response.
+- Never wrap JSON in markdown.
+- Never include explanation text.
 
 Output ONLY the JSON. No markdown, no explanation.`;
 
@@ -86,59 +90,69 @@ const CODE_GENERATION_SYSTEM_PROMPT = `You are an expert Remotion and React deve
 STRICT RULES:
 1. Output ONLY valid TypeScript/TSX code. No markdown fences, no explanation.
 2. The component MUST be a default export named "GeneratedAnimation"
-3. Use ONLY these allowed imports (they will be available at runtime):
+3. Use ONLY these allowed imports:
    - import { useCurrentFrame, useVideoConfig, interpolate, spring, Sequence } from 'remotion'
    - import React from 'react'
    - Relative image imports from './assets/<filename>' when reference images are provided
-4. NEVER use external image URLs. If images are available, import them from ./assets and animate them with standard <img> tags.
-5. NO external font imports. Use the fontStyle from the brief as a CSS font-family.
+4. NEVER use external image URLs.
+5. NO external font imports.
 6. All animations MUST use interpolate() or spring() tied to useCurrentFrame()
 7. The component must fill a full frame using width and height from useVideoConfig()
-8. Handle multiple scenes using the <Sequence from={frameNumber}> component
+8. Handle multiple scenes using <Sequence from={frameNumber}>
 9. Keep the code under 300 lines
-10. Use spring() for entrance animations, interpolate() for continuous ones
+10. Use spring() for entrance animations
 11. Use the exact color palette from the creative brief
-12. End the animation gracefully (fade out in the last 1 second)
-13. IMPORTANT: Use ONLY standard ASCII characters for punctuation. Do NOT use full-width characters like "。" or "，".
-14. If reference images are provided, treat them as primary visual assets and include them in the composition rather than replacing them with abstract placeholders.
+12. End the animation gracefully
+13. Use ONLY ASCII punctuation
+14. If reference images are provided, animate them directly
+15. Every interpolate() call MUST have equal-length inputRange and outputRange arrays.
+16. interpolate() outputRange values MUST be numeric only.
+17. Never use colors, strings, percentages, or transforms inside interpolate().
+18. For colors and transforms, interpolate numeric values separately.
+19. Never generate undefined variables.
+20. Every spring() call MUST include both fps and frame.
+21. Do not generate dynamic array lengths.
+22. Never use map() to build interpolate ranges.
+23. Prefer simple deterministic animations.
+24. Use simple linear animation patterns only.
+25. Maximum 2 interpolate() calls per animated element.
+26. Avoid nested transforms.
+27. Do not generate procedural particle systems.
+28. Do not generate dynamically computed ranges.
 
 The output will be directly executed in a Remotion renderer.
-Any syntax error will cause the entire job to fail. Make the code correct on the first try.`;
+Any syntax or runtime error will fail the render.`;
 
 /**
  * Minimal system prompt used for edit/refinement calls.
- * Shorter = fewer tokens consumed on every chat turn.
  */
 const EDIT_SYSTEM_PROMPT = `You are an expert Remotion/React developer making targeted edits to an animation.
 
 STRICT RULES:
-1. Output ONLY valid TypeScript/TSX. No markdown, no explanation.
+1. Output ONLY valid TypeScript/TSX. No markdown.
 2. Default export must be named "GeneratedAnimation".
-3. Allowed imports ONLY: remotion (useCurrentFrame, useVideoConfig, interpolate, spring, Sequence), React, and relative image imports from ./assets/<filename> when provided.
-4. No external URLs or font imports. Use CSS gradients, SVG, inline styles, and local image assets.
-5. All animations tied to useCurrentFrame() via interpolate() or spring().
-6. Fill the full frame using useVideoConfig() width/height.
-7. Under 300 lines. ASCII punctuation only.
-8. Apply ONLY the requested changes — keep everything else the same.
-9. If reference images are provided, preserve and animate them rather than replacing them with abstract stand-ins.`;
+3. Allowed imports ONLY:
+   - remotion
+   - React
+   - local ./assets imports
+4. No external URLs or font imports.
+5. All animations tied to useCurrentFrame().
+6. Fill the full frame.
+7. Under 300 lines.
+8. ASCII punctuation only.
+9. Apply ONLY requested changes.
+10. Every interpolate() call MUST have matching inputRange/outputRange lengths.
+11. interpolate() outputRange values MUST be numeric only.
+12. Every spring() call MUST include fps and frame.`;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Sleeps for `ms` milliseconds.
- */
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Strips markdown fences from LLM output that may accidentally include them.
- */
-/**
- * Strips markdown fences and replaces full-width punctuation that LLMs sometimes hallucinate.
- */
 function sanitizeGeneratedCode(text: string): string {
   return text
     .replace(/^```(?:json|tsx|typescript)?\s*/i, '')
@@ -154,6 +168,80 @@ function sanitizeGeneratedCode(text: string): string {
     .trim();
 }
 
+/**
+ * Runtime hardening for Remotion code.
+ * Fixes common hallucinated interpolate/spring issues.
+ */
+function hardenRemotionCode(code: string): string {
+  let safe = code;
+
+  // ---------------------------------------------------
+  // Fix interpolate range mismatches
+  // ---------------------------------------------------
+
+  safe = safe.replace(
+    /interpolate\(\s*([^,]+),\s*\[([^\]]+)\],\s*\[([^\]]+)\]/g,
+    (_, value, inputRange, outputRange) => {
+      const inVals = inputRange
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+      const outVals = outputRange
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+      const minLen = Math.min(inVals.length, outVals.length);
+
+      return `interpolate(${value}, [${inVals
+        .slice(0, minLen)
+        .join(', ')}], [${outVals.slice(0, minLen).join(', ')}]`;
+    },
+  );
+
+  // ---------------------------------------------------
+  // Replace invalid numeric outputs
+  // ---------------------------------------------------
+
+  safe = safe.replace(
+    /interpolate\(\s*([^,]+),\s*\[([^\]]+)\],\s*\[([^\]]+)\]/g,
+    (match, value, inputRange, outputRange) => {
+      const outputs = outputRange
+        .split(',')
+        .map((s: string) => s.trim());
+
+      const numericOutputs = outputs.every((o: string) =>
+        /^-?\d+(\.\d+)?$/.test(o),
+      );
+
+      if (!numericOutputs) {
+        return `interpolate(${value}, [0, 1], [0, 1]`;
+      }
+
+      return match;
+    },
+  );
+
+  // ---------------------------------------------------
+  // Ensure spring includes fps/frame
+  // ---------------------------------------------------
+
+  safe = safe.replace(/spring\(\{([^}]+)\}\)/g, (match) => {
+    if (!match.includes('fps')) {
+      return `spring({ fps, frame })`;
+    }
+
+    if (!match.includes('frame')) {
+      return `spring({ fps, frame })`;
+    }
+
+    return match;
+  });
+
+  return safe;
+}
+
 // ---------------------------------------------------------------------------
 // GeminiService
 // ---------------------------------------------------------------------------
@@ -163,6 +251,7 @@ export class GeminiService {
 
   constructor() {
     const client = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+
     this.model = client.getGenerativeModel({
       model: MODEL_NAME,
       safetySettings: SAFETY_SETTINGS,
@@ -173,22 +262,17 @@ export class GeminiService {
   // Public Methods
   // -------------------------------------------------------------------------
 
-  /**
-   * Enriches a raw user prompt into a structured creative brief.
-   *
-   * @param rawPrompt - Original text submitted by the user.
-   * @param style     - Requested visual style.
-   * @param duration  - Target animation duration in seconds.
-   * @returns Parsed EnrichedBrief object ready for code generation.
-   * @throws On repeated Gemini failures after MAX_RETRIES attempts.
-   */
   async enrichPrompt(
     rawPrompt: string,
     style: string,
     duration: number,
     referenceImages: PreparedReferenceImage[] = [],
   ): Promise<EnrichedBrief> {
-    const userMessage = `Style: ${style}\nDuration: ${duration} seconds\n\nUser request:\n${rawPrompt}`;
+    const userMessage = `Style: ${style}
+Duration: ${duration} seconds
+
+User request:
+${rawPrompt}`;
 
     const rawJson = await this.callWithRetry(
       ENRICH_SYSTEM_PROMPT,
@@ -199,27 +283,18 @@ export class GeminiService {
     const cleaned = sanitizeGeneratedCode(rawJson);
 
     let parsed: unknown;
+
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      throw new Error(`Gemini returned non-JSON for enrichPrompt: ${cleaned.slice(0, 200)}`);
+      throw new Error(
+        `Gemini returned non-JSON for enrichPrompt: ${cleaned.slice(0, 200)}`,
+      );
     }
 
     return this.validateEnrichedBrief(parsed);
   }
 
-  /**
-   * Generates a self-contained Remotion TSX component from an enriched brief.
-   *
-   * If the first attempt produces code that fails sanitization, retries once
-   * with the sanitization error appended to the prompt.
-   *
-   * @param brief      - Enriched creative brief from enrichPrompt().
-   * @param duration   - Animation duration in seconds.
-   * @param resolution - Target resolution string.
-   * @returns Valid, sanitized TSX source code as a string.
-   * @throws On repeated failures or if sanitization fails after retry.
-   */
   async generateRemotionCode(
     brief: EnrichedBrief,
     duration: number,
@@ -240,15 +315,24 @@ export class GeminiService {
     );
 
     code = sanitizeGeneratedCode(code);
+    code = hardenRemotionCode(code);
 
-    // Attempt sanitization — if it fails, retry once with the error context
     try {
       sanitizeJSX(code);
+      this.validateRuntimeSafety(code);
     } catch (err) {
       if (err instanceof SanitizationError) {
-        logger.warn({ msg: 'First code generation failed sanitization, retrying', error: err.message });
+        logger.warn({
+          msg: 'First code generation failed sanitization, retrying',
+          error: err.message,
+        });
 
-        const retryMessage = `${userMessage}\n\n--- PREVIOUS ATTEMPT FAILED SANITIZATION ---\nError: ${err.message}\nPlease fix the issue and regenerate.`;
+        const retryMessage = `${userMessage}
+
+--- PREVIOUS ATTEMPT FAILED ---
+Error: ${err.message}
+Please fix and regenerate.`;
+
         code = sanitizeGeneratedCode(
           await this.callWithRetry(
             CODE_GENERATION_SYSTEM_PROMPT,
@@ -256,8 +340,11 @@ export class GeminiService {
             'generateRemotionCode-retry',
           ),
         );
-        // Let this throw if it still fails — caller handles it
+
+        code = hardenRemotionCode(code);
+
         sanitizeJSX(code);
+        this.validateRuntimeSafety(code);
       } else {
         throw err;
       }
@@ -265,18 +352,7 @@ export class GeminiService {
 
     return code;
   }
-  /**
-   * Generates updated Remotion code for an EDIT request.
-   *
-   * Token-optimised: skips enrichPrompt entirely.
-   * Builds a compact ~200-token context from the stored brief summary
-   * plus the user's edit instruction.
-   *
-   * @param editInstruction - What the user wants to change.
-   * @param context         - Compressed previous brief stored in DB.
-   * @param duration        - Animation duration in seconds.
-   * @param resolution      - Target resolution string.
-   */
+
   async generateRemotionCodeFromEdit(
     editInstruction: string,
     context: import('../types/index.js').EditContext,
@@ -284,13 +360,15 @@ export class GeminiService {
     resolution: string,
     referenceImages: PreparedReferenceImage[] = [],
   ): Promise<string> {
-    const [width, height] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
+    const [width, height] =
+      resolution === '1080p' ? [1920, 1080] : [1280, 720];
 
     const userMessage = [
       `Current animation summary: ${context.briefSummary}`,
       `Colors: ${context.colorPalette.join(', ')}`,
       `Mood: ${context.animationMood} | Font: ${context.fontStyle}`,
-      `Duration: ${duration}s (${duration * 30} frames at 30fps) | Resolution: ${width}x${height}`,
+      `Duration: ${duration}s (${duration * 30} frames at 30fps)`,
+      `Resolution: ${width}x${height}`,
       this.buildReferenceImageText(referenceImages),
       ``,
       `User edit request: ${editInstruction}`,
@@ -303,13 +381,24 @@ export class GeminiService {
     );
 
     code = sanitizeGeneratedCode(code);
+    code = hardenRemotionCode(code);
 
     try {
       sanitizeJSX(code);
+      this.validateRuntimeSafety(code);
     } catch (err) {
       if (err instanceof SanitizationError) {
-        logger.warn({ msg: 'Edit code failed sanitization, retrying', error: (err as Error).message });
-        const retryMessage = `${userMessage}\n\n--- PREVIOUS ATTEMPT FAILED ---\nError: ${(err as Error).message}\nFix it and regenerate.`;
+        logger.warn({
+          msg: 'Edit code failed sanitization, retrying',
+          error: (err as Error).message,
+        });
+
+        const retryMessage = `${userMessage}
+
+--- PREVIOUS ATTEMPT FAILED ---
+Error: ${(err as Error).message}
+Fix it and regenerate.`;
+
         code = sanitizeGeneratedCode(
           await this.callWithRetry(
             EDIT_SYSTEM_PROMPT,
@@ -317,7 +406,11 @@ export class GeminiService {
             'generateRemotionCodeFromEdit-retry',
           ),
         );
+
+        code = hardenRemotionCode(code);
+
         sanitizeJSX(code);
+        this.validateRuntimeSafety(code);
       } else {
         throw err;
       }
@@ -326,14 +419,10 @@ export class GeminiService {
     return code;
   }
 
+  // -------------------------------------------------------------------------
+  // Retry + Generation
+  // -------------------------------------------------------------------------
 
-  /**
-   * Calls Gemini with exponential backoff retry logic.
-   *
-   * @param systemPrompt - Instruction prompt for the model.
-   * @param userMessage  - User-side content of the conversation turn.
-   * @param context      - Label used in log messages.
-   */
   private async callWithRetry(
     systemPrompt: string,
     parts: Array<
@@ -346,14 +435,34 @@ export class GeminiService {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        logger.debug({ msg: `Gemini call attempt ${attempt}/${MAX_RETRIES}`, context });
+        logger.debug({
+          msg: `Gemini call attempt ${attempt}/${MAX_RETRIES}`,
+          context,
+        });
 
         const result = await this.model.generateContent({
           systemInstruction: systemPrompt,
-          contents: [{ role: 'user', parts }],
+
+          contents: [
+            {
+              role: 'user',
+              parts,
+            },
+          ],
+
+          generationConfig: {
+            temperature: 0.2,
+            topP: 0.8,
+            topK: 20,
+            maxOutputTokens: 8192,
+            responseMimeType: context.includes('enrichPrompt')
+              ? 'application/json'
+              : 'text/plain',
+          },
         });
 
         const candidate = result.response.candidates?.[0];
+
         if (!candidate) {
           throw new Error('Gemini returned no candidates');
         }
@@ -363,12 +472,13 @@ export class GeminiService {
           .join('');
 
         if (!text.trim()) {
-          throw new Error('Gemini returned an empty response');
+          throw new Error('Gemini returned empty response');
         }
 
         return text;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+
         logger.warn({
           msg: `Gemini attempt ${attempt} failed`,
           context,
@@ -377,7 +487,12 @@ export class GeminiService {
 
         if (attempt < MAX_RETRIES) {
           const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
-          logger.debug({ msg: `Backing off ${backoff}ms before retry`, context });
+
+          logger.debug({
+            msg: `Backing off ${backoff}ms`,
+            context,
+          });
+
           await sleep(backoff);
         }
       }
@@ -388,16 +503,19 @@ export class GeminiService {
     );
   }
 
-  /**
-   * Builds the user-facing prompt for the code generation call.
-   */
+  // -------------------------------------------------------------------------
+  // Prompt Builders
+  // -------------------------------------------------------------------------
+
   private buildCodeGenPrompt(
     brief: EnrichedBrief,
     duration: number,
     resolution: string,
     referenceImages: PreparedReferenceImage[],
   ): string {
-    const [width, height] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
+    const [width, height] =
+      resolution === '1080p' ? [1920, 1080] : [1280, 720];
+
     return [
       `Creative Brief:`,
       `Prompt: ${brief.enrichedPrompt}`,
@@ -411,12 +529,16 @@ export class GeminiService {
       `Key Scenes:`,
       ...brief.keyScenes.map(
         (s) =>
-          `  - ${s.startSecond}s: ${s.description} [elements: ${s.elements.join(', ')}]`,
+          `- ${s.startSecond}s: ${s.description} [elements: ${s.elements.join(
+            ', ',
+          )}]`,
       ),
     ].join('\n');
   }
 
-  private buildReferenceImageText(referenceImages: PreparedReferenceImage[]): string {
+  private buildReferenceImageText(
+    referenceImages: PreparedReferenceImage[],
+  ): string {
     if (!referenceImages.length) {
       return 'Reference Images: none';
     }
@@ -427,14 +549,16 @@ export class GeminiService {
         (image, index) =>
           `- Image ${index + 1}: available as ./assets/${image.filename}`,
       ),
-      'If you use these assets, import them exactly from the listed ./assets paths.',
+      'Import assets exactly from the listed paths.',
     ].join('\n');
   }
 
   private buildUserParts(
     text: string,
     referenceImages: PreparedReferenceImage[],
-  ): Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> {
+  ): Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > {
     const parts: Array<
       { text: string } | { inlineData: { mimeType: string; data: string } }
     > = [{ text }];
@@ -451,9 +575,10 @@ export class GeminiService {
     return parts;
   }
 
-  /**
-   * Validates the shape returned by Gemini for the enrichPrompt call.
-   */
+  // -------------------------------------------------------------------------
+  // Validation
+  // -------------------------------------------------------------------------
+
   private validateEnrichedBrief(data: unknown): EnrichedBrief {
     if (typeof data !== 'object' || data === null) {
       throw new Error('enrichPrompt response is not an object');
@@ -462,22 +587,51 @@ export class GeminiService {
     const d = data as Record<string, unknown>;
 
     if (typeof d['enrichedPrompt'] !== 'string') {
-      throw new Error('enrichPrompt response missing enrichedPrompt string');
+      throw new Error('Missing enrichedPrompt');
     }
+
     if (!Array.isArray(d['colorPalette'])) {
-      throw new Error('enrichPrompt response missing colorPalette array');
+      throw new Error('Missing colorPalette');
     }
+
     if (typeof d['fontStyle'] !== 'string') {
-      throw new Error('enrichPrompt response missing fontStyle string');
+      throw new Error('Missing fontStyle');
     }
+
     if (typeof d['animationMood'] !== 'string') {
-      throw new Error('enrichPrompt response missing animationMood string');
+      throw new Error('Missing animationMood');
     }
+
     if (!Array.isArray(d['keyScenes'])) {
-      throw new Error('enrichPrompt response missing keyScenes array');
+      throw new Error('Missing keyScenes');
     }
 
     return d as unknown as EnrichedBrief;
+  }
+
+  private validateRuntimeSafety(code: string): void {
+    const interpolateRegex =
+      /interpolate\(\s*[^,]+,\s*\[([^\]]+)\],\s*\[([^\]]+)\]/g;
+
+    let match;
+
+    while ((match = interpolateRegex.exec(code)) !== null) {
+      const inputLen = match[1]
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean).length;
+
+      const outputLen = match[2]
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean).length;
+
+      if (inputLen !== outputLen) {
+        throw new Error(
+          `Unsafe interpolate(): inputRange(${inputLen}) !== outputRange(${outputLen})`,
+        );
+      }
+    }
   }
 }
 
