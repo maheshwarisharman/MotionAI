@@ -222,6 +222,94 @@ const ACCEPTED_IMAGE_TYPES = new Set([
   "image/gif",
 ]);
 
+const PLACEHOLDER_PROMPTS = [
+  "Generate a smooth 3D logo reveal with neon lighting.",
+  "Animate my product photo into a cinematic 5-second ad.",
+  "Create a minimal motion poster with floating typography.",
+  "Make a bold kinetic text intro for my YouTube channel.",
+  "Turn these images into a seamless parallax animation.",
+  "Design a corporate explainer scene with clean transitions.",
+  "Create a looping background animation for a landing page.",
+] as const;
+
+function useTypingPlaceholder({
+  prompts,
+  enabled,
+}: {
+  prompts: readonly string[];
+  enabled: boolean;
+}): string {
+  const [text, setText] = useState("");
+  const stateRef = useRef({
+    promptIndex: 0,
+    charIndex: 0,
+    isDeleting: false,
+  });
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      setText("");
+      stateRef.current = { promptIndex: 0, charIndex: 0, isDeleting: false };
+      return;
+    }
+
+    const safePrompts = prompts.filter((prompt) => prompt.trim().length > 0);
+    if (safePrompts.length === 0) return;
+
+    const tick = () => {
+      const state = stateRef.current;
+      const currentPrompt = safePrompts[state.promptIndex] ?? safePrompts[0]!;
+
+      const typingDelayMs = 22 + Math.floor(Math.random() * 26); // 22..47
+      const deletingDelayMs = 12 + Math.floor(Math.random() * 18); // 12..29
+      const holdFullMs = 900;
+      const holdEmptyMs = 250;
+
+      if (!state.isDeleting) {
+        state.charIndex = Math.min(state.charIndex + 1, currentPrompt.length);
+        setText(currentPrompt.slice(0, state.charIndex));
+
+        if (state.charIndex >= currentPrompt.length) {
+          state.isDeleting = true;
+          timeoutRef.current = window.setTimeout(tick, holdFullMs);
+          return;
+        }
+
+        timeoutRef.current = window.setTimeout(tick, typingDelayMs);
+        return;
+      }
+
+      state.charIndex = Math.max(state.charIndex - 1, 0);
+      setText(currentPrompt.slice(0, state.charIndex));
+
+      if (state.charIndex <= 0) {
+        state.isDeleting = false;
+        state.promptIndex = (state.promptIndex + 1) % safePrompts.length;
+        timeoutRef.current = window.setTimeout(tick, holdEmptyMs);
+        return;
+      }
+
+      timeoutRef.current = window.setTimeout(tick, deletingDelayMs);
+    };
+
+    tick();
+
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [enabled, prompts]);
+
+  return text.length > 0 ? text : "";
+}
+
 function getWebSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -287,6 +375,11 @@ export function ChatWorkspace() {
   const socketRef = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const animatedPlaceholder = useTypingPlaceholder({
+    prompts: PLACEHOLDER_PROMPTS,
+    enabled: !isSubmitting && draft.trim().length === 0,
+  });
+
   const visibleMessages = useMemo(
     () => [
       ...messages.map((message) => ({ ...message, isPending: false })),
@@ -332,35 +425,43 @@ export function ChatWorkspace() {
       setProject(event.project);
       setMessages(event.messages);
 
-      if (event.project.latest_job_id && event.project.latest_video_url) {
+      const latestJobId = event.project.latest_job_id;
+      const latestVideoUrl = event.project.latest_video_url;
+      if (
+        typeof latestJobId === "string" &&
+        latestJobId.length > 0 &&
+        typeof latestVideoUrl === "string" &&
+        latestVideoUrl.length > 0
+      ) {
         setVideoByJobId((current) => ({
           ...current,
-          [event.project.latest_job_id]: event.project.latest_video_url,
+          [latestJobId]: latestVideoUrl,
         }));
       }
 
-      if (!event.latestJobStatus) {
+      const latestStatus = event.latestJobStatus;
+      if (!latestStatus) {
         setJobStatus({ status: "idle" });
-      } else if (event.latestJobStatus.status === "queued") {
+      } else if (latestStatus.status === "queued") {
         setJobStatus({
-          jobId: event.latestJobStatus.jobId,
+          jobId: latestStatus.jobId,
           status: "queued",
-          position: event.latestJobStatus.position,
+          position: latestStatus.position,
         });
-      } else if (event.latestJobStatus.status === "rendering") {
+      } else if (latestStatus.status === "rendering") {
         setJobStatus({
-          jobId: event.latestJobStatus.jobId,
+          jobId: latestStatus.jobId,
           status: "rendering",
-          progress: event.latestJobStatus.progress,
+          progress: latestStatus.progress,
         });
-      } else if (event.latestJobStatus.status === "completed") {
-        setJobStatus(event.latestJobStatus);
+      } else if (latestStatus.status === "completed") {
+        setJobStatus(latestStatus);
         setVideoByJobId((current) => ({
           ...current,
-          [event.latestJobStatus.jobId]: event.latestJobStatus.downloadUrl,
+          [latestStatus.jobId]: latestStatus.downloadUrl,
         }));
       } else {
-        setJobStatus(event.latestJobStatus);
+        setJobStatus(latestStatus);
       }
 
       setPendingMessages((current) =>
@@ -378,10 +479,17 @@ export function ChatWorkspace() {
 
     if (event.type === "project.updated") {
       setProject(event.project);
-      if (event.project.latest_job_id && event.project.latest_video_url) {
+      const latestJobId = event.project.latest_job_id;
+      const latestVideoUrl = event.project.latest_video_url;
+      if (
+        typeof latestJobId === "string" &&
+        latestJobId.length > 0 &&
+        typeof latestVideoUrl === "string" &&
+        latestVideoUrl.length > 0
+      ) {
         setVideoByJobId((current) => ({
           ...current,
-          [event.project.latest_job_id]: event.project.latest_video_url,
+          [latestJobId]: latestVideoUrl,
         }));
       }
       return;
@@ -593,10 +701,14 @@ export function ChatWorkspace() {
           ? submissionError.message
           : "Something went wrong while sending your request.";
       setError(message);
-      setJobStatus({
+      setJobStatus((previous) => ({
+        jobId:
+          "jobId" in previous && typeof previous.jobId === "string"
+            ? previous.jobId
+            : "unknown",
         status: "failed",
         error: message,
-      });
+      }));
     } finally {
       if (submitted) {
         setAttachments([]);
@@ -729,7 +841,7 @@ export function ChatWorkspace() {
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isSubmitting}
-              placeholder="Describe the animation you want to generate..."
+              placeholder={animatedPlaceholder}
               className="min-h-[140px] resize-none border-0 bg-transparent p-6 text-base md:text-lg shadow-none focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/60"
             />
 
@@ -864,8 +976,6 @@ export function ChatWorkspace() {
 
                 <div className="flex items-center justify-between gap-4 border-t border-white/5 pt-4 mt-2">
                   <div className="text-xs text-muted-foreground/80">
-                    The full workspace opens automatically after generation
-                    begins.
                   </div>
                   <Button
                     onClick={() => void submitPrompt()}
