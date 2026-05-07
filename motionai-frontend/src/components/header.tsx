@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuGroup,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -148,29 +149,34 @@ export default function Header() {
                   </div>
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className="w-72 rounded-2xl border border-white/10 bg-neutral-950/95 p-2 text-foreground shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur"
-              >
-                <DropdownMenuLabel className="px-3 py-2">
-                  <div className="text-sm font-medium text-foreground">
-                    {user.email}
-                  </div>
-                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                    New renders created while signed in are saved to your MotionAI history.
-                  </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-white/10" />
-                <DropdownMenuItem
-                  className="rounded-xl px-3 py-2.5 text-foreground focus:bg-white/8"
-                  onClick={() => {
-                    void signOut();
-                  }}
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
+<DropdownMenuContent
+  align="end"
+  className="w-72 rounded-2xl border border-white/10 bg-neutral-950/95 p-2 text-foreground shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur"
+>
+  <DropdownMenuGroup>
+    <DropdownMenuLabel className="px-3 py-2">
+      <div className="text-sm font-medium text-foreground">
+        {user.email}
+      </div>
+
+      <div className="mt-1 text-xs leading-5 text-muted-foreground">
+        New renders created while signed in are saved to your MotionAI history.
+      </div>
+    </DropdownMenuLabel>
+  </DropdownMenuGroup>
+
+  <DropdownMenuSeparator className="bg-white/10" />
+
+  <DropdownMenuItem
+    className="rounded-xl px-3 py-2.5 text-foreground focus:bg-white/8"
+    onClick={() => {
+      void signOut();
+    }}
+  >
+    <LogOut className="h-4 w-4" />
+    Sign out
+  </DropdownMenuItem>
+</DropdownMenuContent>
             </DropdownMenu>
           ) : (
             <Button
@@ -262,7 +268,7 @@ export default function Header() {
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="you@studio.com"
                     className="h-11 rounded-2xl border-white/10 bg-white/[0.04] px-4 text-foreground placeholder:text-muted-foreground/50"
-                  />
+                  /><br/>
                 </label>
 
                 <label className="space-y-2">

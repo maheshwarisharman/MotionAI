@@ -991,37 +991,6 @@ export function ChatWorkspace() {
             Start with a prompt, then continue in the full chat while MotionAI
             streams progress and delivers the finished video in place.
           </p>
-
-          <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-left shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop-blur">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              {user ? (
-                <>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-emerald-100">
-                    <FolderClock className="h-3.5 w-3.5" />
-                    Signed in
-                  </div>
-                  <div className="text-muted-foreground">
-                    New projects will be saved automatically to your history.
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-foreground">
-                    <LockKeyhole className="h-3.5 w-3.5" />
-                    Guest mode available
-                  </div>
-                  <div className="text-muted-foreground">
-                    Create without logging in, or sign in from the header to save your projects.
-                  </div>
-                </>
-              )}
-            </div>
-            {!authAvailable && isAuthReady && (
-              <div className="mt-3 text-xs uppercase tracking-[0.18em] text-muted-foreground/80">
-                Supabase auth isn&apos;t configured in this frontend yet, so guest mode is the only active path.
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="w-full max-w-3xl mx-auto animate-in fade-in zoom-in-95 duration-700 delay-150 fill-mode-both">
@@ -1040,6 +1009,10 @@ export function ChatWorkspace() {
               onKeyDown={handleKeyDown}
               disabled={isSubmitting}
               placeholder={animatedPlaceholder}
+              style={{
+                maxHeight: "30vh",
+                overflow: "auto",
+              }}
               className="min-h-[140px] resize-none border-0 bg-transparent p-6 text-base md:text-lg shadow-none focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/60"
             />
 
@@ -1174,9 +1147,6 @@ export function ChatWorkspace() {
 
                 <div className="flex items-center justify-between gap-4 border-t border-white/5 pt-4 mt-2">
                   <div className="text-xs text-muted-foreground/80">
-                    {user
-                      ? "Signed-in renders are saved to your history."
-                      : "Guest creation stays fully available."}
                   </div>
                   <Button
                     onClick={() => void submitPrompt()}
@@ -1220,7 +1190,7 @@ export function ChatWorkspace() {
                   </div>
                 ) : savedProjects.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
-                    Your saved projects will appear here after your first signed-in render.
+                    Create a project to get started.
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1483,7 +1453,7 @@ export function ChatWorkspace() {
                   />
                 </div>
               ) : (
-                <div className="flex aspect-video items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-sm text-muted-foreground">
+                <div className="flex aspect-video items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-sm text-muted-foreground p-3 text-center">
                   Your video preview will appear here once rendering completes.
                 </div>
               )}
@@ -1566,27 +1536,6 @@ export function ChatWorkspace() {
             </CardContent>
           </Card>
 
-          <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
-            <CardHeader>
-              <CardTitle className="text-base">Connection</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                {connectionState === "connected" ? (
-                  <Wifi className="h-4 w-4 text-emerald-300" />
-                ) : (
-                  <WifiOff className="h-4 w-4 text-muted-foreground" />
-                )}
-                {connectionState === "connected"
-                  ? "Realtime updates are live."
-                  : connectionState === "reconnecting"
-                    ? "Reconnecting to live updates…"
-                    : connectionState === "connecting"
-                      ? "Connecting to live updates…"
-                      : "Live updates will connect when a project is open."}
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </main>
