@@ -7,17 +7,21 @@ import {
   ArrowUp,
   CheckCircle2,
   Clapperboard,
+  FolderClock,
   ImagePlus,
+  LockKeyhole,
   Loader2,
   MessageSquareText,
+  Plus,
   PlayCircle,
+  Sparkles,
   X,
   SlidersHorizontal,
-  Sparkles,
   Wifi,
   WifiOff,
   User,
 } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,6 +52,9 @@ type Message = {
 
 type Project = {
   id: string;
+  created_at?: string;
+  updated_at?: string;
+  user_id?: string | null;
   title: string;
   style: "modern" | "minimal" | "bold" | "corporate";
   duration: number;
@@ -253,7 +260,6 @@ function useTypingPlaceholder({
         window.clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
-      setText("");
       stateRef.current = { promptIndex: 0, charIndex: 0, isDeleting: false };
       return;
     }
@@ -307,15 +313,31 @@ function useTypingPlaceholder({
     };
   }, [enabled, prompts]);
 
-  return text.length > 0 ? text : "";
+  return enabled && text.length > 0 ? text : "";
 }
 
-function getWebSocketUrl(baseUrl: string): string {
+function getWebSocketUrl(baseUrl: string, accessToken?: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws";
   url.search = "";
+  if (accessToken) {
+    url.searchParams.set("access_token", accessToken);
+  }
   return url.toString();
+}
+
+function formatProjectTimestamp(value: string | undefined): string {
+  if (!value) {
+    return "Recently updated";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function statusLabel(jobStatus: LatestJobStatus): string {
@@ -351,6 +373,7 @@ function statusTone(jobStatus: LatestJobStatus): string {
 }
 
 export function ChatWorkspace() {
+  const { authAvailable, isAuthReady, session, user } = useAuth();
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -366,6 +389,9 @@ export function ChatWorkspace() {
     status: "idle",
   });
   const [videoByJobId, setVideoByJobId] = useState<Record<string, string>>({});
+  const [savedProjects, setSavedProjects] = useState<Project[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<
     "idle" | "connecting" | "connected" | "reconnecting" | "error"
@@ -379,6 +405,16 @@ export function ChatWorkspace() {
     prompts: PLACEHOLDER_PROMPTS,
     enabled: !isSubmitting && draft.trim().length === 0,
   });
+
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    if (!session?.access_token) {
+      return {};
+    }
+
+    const headers: Record<string, string> = {};
+    headers.Authorization = `Bearer ${session.access_token}`;
+    return headers;
+  }, [session?.access_token]);
 
   const visibleMessages = useMemo(
     () => [
@@ -410,10 +446,97 @@ export function ChatWorkspace() {
     jobStatus.status === "creating" ||
     jobStatus.status === "queued" ||
     jobStatus.status === "rendering";
+  const canEditCurrentProject = !project?.user_id || project.user_id === user?.id;
+  const accessRestrictionMessage =
+    !user && project?.user_id
+      ? "Sign back in to continue editing this saved project, or start a new guest project."
+      : null;
+  const displayError = error ?? accessRestrictionMessage;
+
+  const resetWorkspace = () => {
+    setWorkspaceOpen(false);
+    setDraft("");
+    setProject(null);
+    setProjectId(null);
+    setMessages([]);
+    setPendingMessages([]);
+    setJobStatus({ status: "idle" });
+    setVideoByJobId({});
+    setError(null);
+    setConnectionState("idle");
+    setAttachments([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const openProject = (nextProjectId: string) => {
+    setWorkspaceOpen(true);
+    setProjectId(nextProjectId);
+    setProject(null);
+    setMessages([]);
+    setPendingMessages([]);
+    setJobStatus({ status: "idle" });
+    setError(null);
+  };
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [visibleMessages, jobStatus]);
+
+  useEffect(() => {
+    if (!isAuthReady) {
+      return;
+    }
+
+    if (!user || !session?.access_token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSavedProjects = async () => {
+      setIsHistoryLoading(true);
+      setHistoryError(null);
+      setSavedProjects([]);
+
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/projects?limit=12`, {
+          headers: {
+            ...authHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Failed to load saved projects");
+        }
+
+        const payload = (await response.json()) as { projects?: Project[] };
+        if (!cancelled) {
+          setSavedProjects(payload.projects ?? []);
+        }
+      } catch (historyLoadError) {
+        if (!cancelled) {
+          setHistoryError(
+            historyLoadError instanceof Error
+              ? historyLoadError.message
+              : "Failed to load saved projects.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsHistoryLoading(false);
+        }
+      }
+    };
+
+    void loadSavedProjects();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authHeaders, isAuthReady, session?.access_token, user]);
 
   const handleRealtimeEvent = useEffectEvent((event: RealtimeEvent) => {
     if (event.type === "error") {
@@ -424,6 +547,16 @@ export function ChatWorkspace() {
     if (event.type === "project.snapshot") {
       setProject(event.project);
       setMessages(event.messages);
+      setSavedProjects((current) => {
+        if (!event.project.user_id) {
+          return current;
+        }
+
+        const nextProjects = current.filter(
+          (savedProject) => savedProject.id !== event.project.id,
+        );
+        return [event.project, ...nextProjects].slice(0, 12);
+      });
 
       const latestJobId = event.project.latest_job_id;
       const latestVideoUrl = event.project.latest_video_url;
@@ -479,6 +612,16 @@ export function ChatWorkspace() {
 
     if (event.type === "project.updated") {
       setProject(event.project);
+      setSavedProjects((current) => {
+        if (!event.project.user_id) {
+          return current;
+        }
+
+        const nextProjects = current.filter(
+          (savedProject) => savedProject.id !== event.project.id,
+        );
+        return [event.project, ...nextProjects].slice(0, 12);
+      });
       const latestJobId = event.project.latest_job_id;
       const latestVideoUrl = event.project.latest_video_url;
       if (
@@ -559,7 +702,9 @@ export function ChatWorkspace() {
         current === "connected" ? current : "connecting",
       );
 
-      const socket = new WebSocket(getWebSocketUrl(BACKEND_URL));
+      const socket = new WebSocket(
+        getWebSocketUrl(BACKEND_URL, session?.access_token),
+      );
       socketRef.current = socket;
 
       socket.addEventListener("open", () => {
@@ -610,11 +755,11 @@ export function ChatWorkspace() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [projectId]);
+  }, [projectId, session?.access_token]);
 
   const submitPrompt = async () => {
     const content = draft.trim();
-    if (!content || isSubmitting) {
+    if (!content || isSubmitting || !canEditCurrentProject) {
       return;
     }
 
@@ -638,6 +783,7 @@ export function ChatWorkspace() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            ...authHeaders,
           },
           body: JSON.stringify({
             prompt: content,
@@ -655,6 +801,26 @@ export function ChatWorkspace() {
 
         const payload = await response.json();
         setProjectId(payload.projectId);
+        if (user) {
+          setSavedProjects((current) => {
+            const draftProject: Project = {
+              id: payload.projectId as string,
+              title: content.slice(0, 60),
+              style,
+              duration,
+              resolution,
+              latest_job_id: payload.jobId as string,
+              latest_video_url: null,
+              user_id: user.id,
+              updated_at: new Date().toISOString(),
+            };
+
+            const nextProjects = current.filter(
+              (savedProject) => savedProject.id !== draftProject.id,
+            );
+            return [draftProject, ...nextProjects].slice(0, 12);
+          });
+        }
         setJobStatus({
           jobId: payload.jobId,
           status: "queued",
@@ -669,6 +835,7 @@ export function ChatWorkspace() {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              ...authHeaders,
             },
             body: JSON.stringify({
               message: content,
@@ -824,6 +991,37 @@ export function ChatWorkspace() {
             Start with a prompt, then continue in the full chat while MotionAI
             streams progress and delivers the finished video in place.
           </p>
+
+          <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-left shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop-blur">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {user ? (
+                <>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-emerald-100">
+                    <FolderClock className="h-3.5 w-3.5" />
+                    Signed in
+                  </div>
+                  <div className="text-muted-foreground">
+                    New projects will be saved automatically to your history.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-foreground">
+                    <LockKeyhole className="h-3.5 w-3.5" />
+                    Guest mode available
+                  </div>
+                  <div className="text-muted-foreground">
+                    Create without logging in, or sign in from the header to save your projects.
+                  </div>
+                </>
+              )}
+            </div>
+            {!authAvailable && isAuthReady && (
+              <div className="mt-3 text-xs uppercase tracking-[0.18em] text-muted-foreground/80">
+                Supabase auth isn&apos;t configured in this frontend yet, so guest mode is the only active path.
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="w-full max-w-3xl mx-auto animate-in fade-in zoom-in-95 duration-700 delay-150 fill-mode-both">
@@ -976,6 +1174,9 @@ export function ChatWorkspace() {
 
                 <div className="flex items-center justify-between gap-4 border-t border-white/5 pt-4 mt-2">
                   <div className="text-xs text-muted-foreground/80">
+                    {user
+                      ? "Signed-in renders are saved to your history."
+                      : "Guest creation stays fully available."}
                   </div>
                   <Button
                     onClick={() => void submitPrompt()}
@@ -994,6 +1195,61 @@ export function ChatWorkspace() {
             </div>
           </div>
         </div>
+
+        {user && (
+          <div className="mt-8 w-full max-w-3xl animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 fill-mode-both">
+            <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
+              <CardHeader className="pb-4">
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <FolderClock className="h-5 w-5" />
+                  Saved Projects
+                </CardTitle>
+                <CardDescription>
+                  Open a previous render or start something new. MotionAI keeps saving while you&apos;re signed in.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isHistoryLoading ? (
+                  <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading your projects…
+                  </div>
+                ) : historyError ? (
+                  <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
+                    {historyError}
+                  </div>
+                ) : savedProjects.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
+                    Your saved projects will appear here after your first signed-in render.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {savedProjects.slice(0, 4).map((savedProject) => (
+                      <button
+                        key={savedProject.id}
+                        type="button"
+                        onClick={() => openProject(savedProject.id)}
+                        className="flex w-full items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-foreground">
+                            {savedProject.title}
+                          </div>
+                          <div className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                            {savedProject.style} · {savedProject.duration}s · {savedProject.resolution}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-xs text-muted-foreground">
+                          {formatProjectTimestamp(savedProject.updated_at)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </main>
     );
   }
@@ -1008,10 +1264,22 @@ export function ChatWorkspace() {
                 <CardTitle className="text-xl">
                   {project?.title || "New MotionAI project"}
                 </CardTitle>
-
+                <CardDescription className="text-sm text-muted-foreground">
+                  {project?.user_id
+                    ? "Saved to your account history."
+                    : "Guest project. Sign in before creating to save future projects."}
+                </CardDescription>
               </div>
 
               <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={resetWorkspace}
+                  className="h-9 rounded-full border-white/10 bg-white/5 px-4 text-foreground hover:bg-white/10"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  New project
+                </Button>
                 <div
                   className={`inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium ${statusTone(jobStatus)}`}
                 >
@@ -1080,9 +1348,9 @@ export function ChatWorkspace() {
                 );
               })}
 
-              {error && (
+              {displayError && (
                 <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  {error}
+                  {displayError}
                 </div>
               )}
 
@@ -1103,9 +1371,11 @@ export function ChatWorkspace() {
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={handleKeyDown}
-                  disabled={isSubmitting || isJobActive}
+                  disabled={isSubmitting || isJobActive || !canEditCurrentProject}
                   placeholder={
-                    isJobActive
+                    !canEditCurrentProject
+                      ? "Sign in again to continue editing this saved project, or start a new guest project."
+                      : isJobActive
                       ? "Wait for the current render to finish before sending another edit…"
                       : "Ask for an edit, a new scene, or a refinement…"
                   }
@@ -1130,6 +1400,7 @@ export function ChatWorkspace() {
                           disabled={
                             isSubmitting ||
                             isJobActive ||
+                            !canEditCurrentProject ||
                             attachments.length >= MAX_ATTACHMENTS
                           }
                           className="h-9 rounded-full border-white/10 bg-white/5 px-4 text-foreground hover:bg-white/10"
@@ -1140,7 +1411,12 @@ export function ChatWorkspace() {
 
                         <Button
                           onClick={() => void submitPrompt()}
-                          disabled={!draft.trim() || isSubmitting || isJobActive}
+                          disabled={
+                            !draft.trim() ||
+                            isSubmitting ||
+                            isJobActive ||
+                            !canEditCurrentProject
+                          }
                           className="h-9 rounded-md bg-white text-black hover:bg-neutral-200 px-4 font-medium"
                         >
                           {isSubmitting ? (
@@ -1227,6 +1503,90 @@ export function ChatWorkspace() {
             </CardContent>
           </Card>
 
+          <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <FolderClock className="h-5 w-5 text-foreground" />
+                Saved Projects
+              </CardTitle>
+              <CardDescription>
+                {user
+                  ? "Everything you create while signed in lands here automatically."
+                  : "Sign in from the header to sync and revisit your project history."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!user ? (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
+                  Guest creation is still available. Signing in simply adds saved history on top.
+                </div>
+              ) : isHistoryLoading ? (
+                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Syncing your projects…
+                </div>
+              ) : historyError ? (
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
+                  {historyError}
+                </div>
+              ) : savedProjects.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-5 text-sm text-muted-foreground">
+                  Your signed-in project history will appear here after the first saved render.
+                </div>
+              ) : (
+                savedProjects.map((savedProject) => {
+                  const isActiveProject = savedProject.id === projectId;
+
+                  return (
+                    <button
+                      key={savedProject.id}
+                      type="button"
+                      onClick={() => openProject(savedProject.id)}
+                      className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-4 text-left transition ${
+                        isActiveProject
+                          ? "border-white/25 bg-white/[0.08]"
+                          : "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-foreground">
+                          {savedProject.title}
+                        </div>
+                        <div className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                          {savedProject.style} · {savedProject.duration}s · {savedProject.resolution}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-[11px] text-muted-foreground">
+                        {formatProjectTimestamp(savedProject.updated_at)}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
+            <CardHeader>
+              <CardTitle className="text-base">Connection</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                {connectionState === "connected" ? (
+                  <Wifi className="h-4 w-4 text-emerald-300" />
+                ) : (
+                  <WifiOff className="h-4 w-4 text-muted-foreground" />
+                )}
+                {connectionState === "connected"
+                  ? "Realtime updates are live."
+                  : connectionState === "reconnecting"
+                    ? "Reconnecting to live updates…"
+                    : connectionState === "connecting"
+                      ? "Connecting to live updates…"
+                      : "Live updates will connect when a project is open."}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </main>

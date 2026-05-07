@@ -7,7 +7,7 @@
  *  - Keeps only per-process socket subscription state in memory
  */
 
-import type { Server as HttpServer } from "http";
+import type { IncomingMessage, Server as HttpServer } from "http";
 
 import { Redis } from "ioredis";
 import { WebSocketServer, WebSocket } from "ws";
@@ -16,6 +16,7 @@ import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { renderQueue } from "../queues/render.queue.js";
 import { databaseService } from "./database.service.js";
+import { getSupabaseAuthClient } from "./supabase.service.js";
 import {
   estimateWaitSeconds,
   getJobStatus,
@@ -23,6 +24,7 @@ import {
 } from "./job-status.service.js";
 
 import type {
+  AuthUser,
   Project,
   RealtimeClientMessage,
   RealtimeErrorEvent,
@@ -35,6 +37,7 @@ const WEBSOCKET_PATH = "/ws";
 
 interface ConnectionState {
   connectionId: string;
+  authUser: AuthUser | null;
   subscribedJobIds: Set<string>;
   subscribedProjectIds: Set<string>;
 }
@@ -85,7 +88,7 @@ class RealtimeService {
       path: WEBSOCKET_PATH,
     });
     this.webSocketServer.on("connection", (socket, request) => {
-      this.handleConnection(socket, request.headers.origin);
+      void this.handleConnection(socket, request);
     });
 
     this.initialized = true;
@@ -157,19 +160,26 @@ class RealtimeService {
     }
   }
 
-  private handleConnection(
+  private async handleConnection(
     socket: WebSocket,
-    origin: string | undefined,
-  ): void {
+    request: IncomingMessage,
+  ): Promise<void> {
     const connectionId = uuidv4();
+    const authUser = await this.resolveAuthUser(request);
 
     this.connections.set(socket, {
       connectionId,
+      authUser,
       subscribedJobIds: new Set<string>(),
       subscribedProjectIds: new Set<string>(),
     });
 
-    logger.info({ msg: "Realtime client connected", connectionId, origin });
+    logger.info({
+      msg: "Realtime client connected",
+      connectionId,
+      origin: request.headers.origin,
+      userId: authUser?.id ?? null,
+    });
 
     this.send(socket, {
       type: "connection.ready",
@@ -248,8 +258,11 @@ class RealtimeService {
           return;
         }
 
-        const project = await databaseService.getProject(message.projectId);
-        if (!project) {
+        const accessibleProject = await databaseService.getAccessibleProject(
+          message.projectId,
+          state.authUser?.id ?? null,
+        );
+        if (!accessibleProject) {
           this.sendError(
             socket,
             `Project "${message.projectId}" not found`,
@@ -266,7 +279,7 @@ class RealtimeService {
           timestamp: new Date().toISOString(),
         });
 
-        await this.sendProjectSnapshot(socket, project);
+        await this.sendProjectSnapshot(socket, accessibleProject);
         return;
       }
 
@@ -286,6 +299,46 @@ class RealtimeService {
       default: {
         this.sendError(socket, "Unsupported message type", "INVALID_MESSAGE");
       }
+    }
+  }
+
+  private async resolveAuthUser(
+    request: IncomingMessage,
+  ): Promise<AuthUser | null> {
+    try {
+      const host = request.headers.host ?? "localhost";
+      const requestUrl = new URL(
+        request.url ?? WEBSOCKET_PATH,
+        `http://${host}`,
+      );
+      const accessToken = requestUrl.searchParams.get("access_token");
+
+      if (!accessToken) {
+        return null;
+      }
+
+      const authClient = getSupabaseAuthClient();
+      const { data, error } = await authClient.auth.getUser(accessToken);
+
+      if (error || !data.user) {
+        logger.warn({
+          msg: "Realtime auth token validation failed",
+          error: error?.message ?? "Unknown realtime auth error",
+        });
+        return null;
+      }
+
+      return {
+        id: data.user.id,
+        email: data.user.email ?? null,
+        isAnonymous: data.user.is_anonymous ?? false,
+      };
+    } catch (err) {
+      logger.warn({
+        msg: "Failed to parse realtime auth token",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
     }
   }
 
