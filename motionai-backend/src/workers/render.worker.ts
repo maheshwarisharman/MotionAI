@@ -26,16 +26,22 @@
  * 100%    — Complete
  */
 
-import { Worker, Job } from 'bullmq';
-import { env } from '../config/env.js';
-import { logger } from '../utils/logger.js';
-import { geminiService } from '../services/gemini.service.js';
-import { renderService } from '../services/render.service.js';
-import { storageService } from '../services/storage.service.js';
-import { databaseService } from '../services/database.service.js';
-import { sanitizeJSX } from '../utils/sanitize.js';
-import { SanitizationError, type AnimationJobData, type EnrichedBrief } from '../types/index.js';
-import { RENDER_QUEUE_NAME, redisConnection } from '../queues/render.queue.js';
+import { Worker, Job } from "bullmq";
+import { env } from "../config/env.js";
+import { logger } from "../utils/logger.js";
+import { geminiService } from "../services/gemini.service.js";
+import { renderService } from "../services/render.service.js";
+import { storageService } from "../services/storage.service.js";
+import { databaseService } from "../services/database.service.js";
+import { inferRenderStage } from "../services/job-status.service.js";
+import { publishRealtimeEvent } from "../services/realtime.service.js";
+import { sanitizeJSX } from "../utils/sanitize.js";
+import {
+  SanitizationError,
+  type AnimationJobData,
+  type EnrichedBrief,
+} from "../types/index.js";
+import { RENDER_QUEUE_NAME, redisConnection } from "../queues/render.queue.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,42 +61,87 @@ function mapRenderProgress(renderPercent: number): number {
   );
 }
 
+async function safePublishRealtimeEvent(
+  event: Parameters<typeof publishRealtimeEvent>[0],
+): Promise<void> {
+  try {
+    await publishRealtimeEvent(event);
+  } catch (err) {
+    logger.error({
+      msg: "Failed to publish realtime event",
+      eventType: event.type,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Worker processor
 // ---------------------------------------------------------------------------
 
 async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
-  const { jobId, prompt, style, duration, resolution, projectId, editContext } = job.data;
+  const { jobId, prompt, style, duration, resolution, projectId, editContext } =
+    job.data;
   const isEditMode = !!editContext;
+  let lastPublishedProgress = -1;
+
+  const publishJobProgress = async (progress: number): Promise<void> => {
+    await job.updateProgress(progress);
+
+    if (progress === lastPublishedProgress) {
+      return;
+    }
+
+    lastPublishedProgress = progress;
+
+    await safePublishRealtimeEvent({
+      type: "render.job.progress",
+      jobId,
+      projectId,
+      status: "rendering",
+      progress,
+      stage: inferRenderStage(progress),
+      timestamp: new Date().toISOString(),
+    });
+  };
 
   logger.info({
-    msg: 'Processing render job',
+    msg: "Processing render job",
     jobId,
     style,
     duration,
     resolution,
-    mode: isEditMode ? 'edit' : 'initial',
+    mode: isEditMode ? "edit" : "initial",
     projectId,
   });
 
   // ── Step 1: Enrich prompt OR use cached brief ────────────────────────────
-  await job.updateProgress(5);
+  await publishJobProgress(5);
 
   let enrichedBrief: EnrichedBrief | null = null;
 
   if (!isEditMode) {
     // Full pipeline — 2 LLM calls
-    logger.info({ msg: 'Enriching prompt', jobId });
+    logger.info({ msg: "Enriching prompt", jobId });
     enrichedBrief = await geminiService.enrichPrompt(prompt, style, duration);
-    logger.info({ msg: 'Prompt enriched', jobId, mood: enrichedBrief.animationMood });
+    logger.info({
+      msg: "Prompt enriched",
+      jobId,
+      mood: enrichedBrief.animationMood,
+    });
   } else {
     // Edit mode — skip enrichPrompt, use compact context from DB
-    logger.info({ msg: 'Using cached brief context for edit', jobId });
+    logger.info({ msg: "Using cached brief context for edit", jobId });
   }
 
   // ── Step 2: Generate Remotion code ───────────────────────────────────────
-  await job.updateProgress(20);
-  logger.info({ msg: 'Generating Remotion code', jobId, mode: isEditMode ? 'edit' : 'initial' });
+  await publishJobProgress(20);
+
+  logger.info({
+    msg: "Generating Remotion code",
+    jobId,
+    mode: isEditMode ? "edit" : "initial",
+  });
 
   let tsxCode: string;
 
@@ -104,30 +155,40 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
     );
   } else if (enrichedBrief) {
     // 2 LLM calls — standard path
-    tsxCode = await geminiService.generateRemotionCode(enrichedBrief, duration, resolution);
+    tsxCode = await geminiService.generateRemotionCode(
+      enrichedBrief,
+      duration,
+      resolution,
+    );
   } else {
-    throw new Error('Neither enrichedBrief nor editContext is available');
+    throw new Error("Neither enrichedBrief nor editContext is available");
   }
 
-  logger.info({ msg: 'Code generated', jobId, codeLength: tsxCode.length });
+  logger.info({ msg: "Code generated", jobId, codeLength: tsxCode.length });
 
   // ── Step 3: Validate generated code ─────────────────────────────────────
-  await job.updateProgress(35);
-  logger.info({ msg: 'Validating generated code', jobId });
+  await publishJobProgress(35);
+
+  logger.info({ msg: "Validating generated code", jobId });
 
   try {
     sanitizeJSX(tsxCode);
   } catch (err) {
     if (err instanceof SanitizationError) {
-      logger.error({ msg: 'Code sanitization failed', jobId, error: err.message });
-      throw new Error('AI generated invalid code, please retry');
+      logger.error({
+        msg: "Code sanitization failed",
+        jobId,
+        error: err.message,
+      });
+      throw new Error("AI generated invalid code, please retry");
     }
     throw err;
   }
 
   // ── Step 4 + 5: Bundle & render ─────────────────────────────────────────
-  await job.updateProgress(40);
-  logger.info({ msg: 'Starting bundle and render', jobId });
+  await publishJobProgress(40);
+
+  logger.info({ msg: "Starting bundle and render", jobId });
 
   const outputPath = await renderService.render({
     jobId,
@@ -135,23 +196,24 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
     duration,
     resolution,
     onProgress: async (renderPercent) => {
-      await job.updateProgress(mapRenderProgress(renderPercent));
+      await publishJobProgress(mapRenderProgress(renderPercent));
     },
   });
 
-  logger.info({ msg: 'Render complete', jobId, outputPath });
+  logger.info({ msg: "Render complete", jobId, outputPath });
 
   // ── Step 6: Upload to S3 ─────────────────────────────────────────────────
-  await job.updateProgress(90);
-  logger.info({ msg: 'Uploading to S3', jobId });
+  await publishJobProgress(90);
+
+  logger.info({ msg: "Uploading to S3", jobId });
 
   const downloadUrl = await storageService.uploadAndSign(jobId, outputPath);
   storageService.cleanupLocalFiles(jobId, env.TEMP_DIR);
 
-  logger.info({ msg: 'Upload complete', jobId, downloadUrl });
+  logger.info({ msg: "Upload complete", jobId, downloadUrl });
 
   // ── Step 7: Persist to Supabase ──────────────────────────────────────────
-  await job.updateProgress(95);
+  await publishJobProgress(95);
 
   if (projectId) {
     try {
@@ -167,24 +229,38 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
           enrichedBrief: briefToStore,
         });
       } else {
-        // Edit mode: only update job / URL fields, keep existing brief
-        const db = (await import('../services/supabase.service.js')).getSupabaseClient();
-        await db
-          .from('projects')
-          .update({
-            latest_job_id: jobId,
-            latest_video_url: downloadUrl,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', projectId);
+        await databaseService.updateProjectLatestRender(projectId, {
+          latestJobId: jobId,
+          latestVideoUrl: downloadUrl,
+        });
       }
 
-      await databaseService.recordCompletion(projectId, jobId, downloadUrl);
-      logger.info({ msg: 'Supabase updated', projectId, jobId });
+      const [updatedProject, assistantMessage] = await Promise.all([
+        databaseService.getProject(projectId),
+        databaseService.recordCompletion(projectId, jobId, downloadUrl),
+      ]);
+
+      if (updatedProject) {
+        await safePublishRealtimeEvent({
+          type: "project.updated",
+          projectId,
+          project: updatedProject,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      await safePublishRealtimeEvent({
+        type: "project.message.created",
+        projectId,
+        message: assistantMessage,
+        timestamp: new Date().toISOString(),
+      });
+
+      logger.info({ msg: "Supabase updated", projectId, jobId });
     } catch (dbErr) {
       // Non-fatal — the render itself succeeded, log and continue
       logger.error({
-        msg: 'Failed to persist render result to Supabase',
+        msg: "Failed to persist render result to Supabase",
         projectId,
         jobId,
         error: (dbErr as Error).message,
@@ -193,8 +269,18 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
   }
 
   // ── Step 8: Complete ─────────────────────────────────────────────────────
-  await job.updateProgress(100);
-  logger.info({ msg: 'Job complete', jobId });
+  await publishJobProgress(100);
+  await safePublishRealtimeEvent({
+    type: "render.job.completed",
+    jobId,
+    projectId,
+    status: "completed",
+    downloadUrl,
+    duration,
+    resolution,
+    timestamp: new Date().toISOString(),
+  });
+  logger.info({ msg: "Job complete", jobId });
 
   return downloadUrl;
 }
@@ -213,42 +299,76 @@ export function createRenderWorker(): Worker<AnimationJobData> {
     },
   );
 
-  worker.on('active', (job) => {
-    logger.info({ msg: 'Job started', jobId: job.data.jobId });
+  worker.on("active", async (job) => {
+    logger.info({ msg: "Job started", jobId: job.data.jobId });
+
+    await safePublishRealtimeEvent({
+      type: "render.job.progress",
+      jobId: job.data.jobId,
+      projectId: job.data.projectId,
+      status: "rendering",
+      progress: 0,
+      stage: "starting",
+      timestamp: new Date().toISOString(),
+    });
   });
 
-  worker.on('completed', (job, returnValue) => {
-    logger.info({ msg: 'Job completed', jobId: job.data.jobId, downloadUrl: returnValue });
+  worker.on("completed", (job, returnValue) => {
+    logger.info({
+      msg: "Job completed",
+      jobId: job.data.jobId,
+      downloadUrl: returnValue,
+    });
   });
 
-  worker.on('failed', async (job, err) => {
+  worker.on("failed", async (job, err) => {
     if (job) {
       logger.error({
-        msg: 'Job failed',
+        msg: "Job failed",
         jobId: job.data.jobId,
         error: err.message,
         stack: err.stack,
       });
 
+      await safePublishRealtimeEvent({
+        type: "render.job.failed",
+        jobId: job.data.jobId,
+        projectId: job.data.projectId,
+        status: "failed",
+        error: err.message,
+        timestamp: new Date().toISOString(),
+      });
+
       // Record failure in Supabase if project-linked
       if (job.data.projectId) {
         try {
-          await databaseService.recordError(job.data.projectId, job.data.jobId, err.message);
+          const errorMessage = await databaseService.recordError(
+            job.data.projectId,
+            job.data.jobId,
+            err.message,
+          );
+
+          await safePublishRealtimeEvent({
+            type: "project.message.created",
+            projectId: job.data.projectId,
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+          });
         } catch {
           // best-effort
         }
       }
     } else {
-      logger.error({ msg: 'Unknown job failed', error: err.message });
+      logger.error({ msg: "Unknown job failed", error: err.message });
     }
   });
 
-  worker.on('error', (err) => {
-    logger.error({ msg: 'Worker error', error: err.message });
+  worker.on("error", (err) => {
+    logger.error({ msg: "Worker error", error: err.message });
   });
 
   logger.info({
-    msg: 'Render worker initialized',
+    msg: "Render worker initialized",
     queue: RENDER_QUEUE_NAME,
     concurrency: env.MAX_RENDER_CONCURRENT,
   });

@@ -11,19 +11,24 @@
  *  - Only one LLM call (code gen) is made for every edit after the first.
  */
 
-import type { Request, Response, NextFunction } from 'express';
-import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
-import { renderQueue } from '../queues/render.queue.js';
-import { databaseService } from '../services/database.service.js';
-import { logger } from '../utils/logger.js';
+import type { Request, Response, NextFunction } from "express";
+import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
+import { renderQueue } from "../queues/render.queue.js";
+import { databaseService } from "../services/database.service.js";
+import {
+  estimateWaitSeconds,
+  getQueuePosition,
+} from "../services/job-status.service.js";
+import { publishRealtimeEvent } from "../services/realtime.service.js";
+import { logger } from "../utils/logger.js";
 import type {
   AnimationJobData,
   CreateProjectRequest,
   ChatRequest,
   EditContext,
   EnrichedBrief,
-} from '../types/index.js';
+} from "../types/index.js";
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -32,14 +37,14 @@ import type {
 const createProjectSchema = z.object({
   prompt: z.string().min(10).max(1000),
   duration: z.number().int().min(3).max(60),
-  resolution: z.enum(['720p', '1080p']),
-  style: z.enum(['modern', 'minimal', 'bold', 'corporate']),
+  resolution: z.enum(["720p", "1080p"]),
+  style: z.enum(["modern", "minimal", "bold", "corporate"]),
 });
 
 const chatSchema = z.object({
   message: z.string().min(3).max(1000),
   duration: z.number().int().min(3).max(60).optional(),
-  resolution: z.enum(['720p', '1080p']).optional(),
+  resolution: z.enum(["720p", "1080p"]).optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -62,18 +67,17 @@ function buildEditContext(brief: EnrichedBrief): EditContext {
   // Compress keyScenes to a single summary sentence
   const scenesSummary = brief.keyScenes
     .map((s) => `${s.startSecond}s: ${s.description}`)
-    .join('; ');
+    .join("; ");
 
   return {
-    briefSummary: `${brief.enrichedPrompt} Scenes: ${scenesSummary}`.slice(0, 400),
+    briefSummary: `${brief.enrichedPrompt} Scenes: ${scenesSummary}`.slice(
+      0,
+      400,
+    ),
     colorPalette: brief.colorPalette,
     animationMood: brief.animationMood,
     fontStyle: brief.fontStyle,
   };
-}
-
-function estimateWaitSeconds(position: number, duration: number): number {
-  return position * (duration * 2 + 60);
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +104,13 @@ export class ProjectController {
     try {
       const parse = createProjectSchema.safeParse(req.body);
       if (!parse.success) {
-        const errors = parse.error.errors.map((e) => e.message).join(', ');
-        res.status(400).json({ error: `Validation failed: ${errors}`, requestId: res.locals['requestId'] });
+        const errors = parse.error.errors.map((e) => e.message).join(", ");
+        res
+          .status(400)
+          .json({
+            error: `Validation failed: ${errors}`,
+            requestId: res.locals["requestId"],
+          });
         return;
       }
 
@@ -119,12 +128,20 @@ export class ProjectController {
       // 2. Persist user message
       const userMessage = await databaseService.createMessage({
         projectId: project.id,
-        role: 'user',
+        role: "user",
         content: body.prompt,
-        messageType: 'initial_generate',
+        messageType: "initial_generate",
+      });
+
+      await publishRealtimeEvent({
+        type: "project.updated",
+        projectId: project.id,
+        project,
+        timestamp: new Date().toISOString(),
       });
 
       // 3. Enqueue render job (no editContext → full pipeline)
+
       const jobData: AnimationJobData = {
         jobId,
         prompt: body.prompt,
@@ -140,19 +157,47 @@ export class ProjectController {
       // 4. Update message with the queued jobId
       await databaseService.setMessageJobId(userMessage.id, jobId);
 
-      const waitingJobs = await renderQueue.getWaiting();
-      const position = waitingJobs.findIndex((j) => j.id === job.id) + 1;
-      const queuePosition = position > 0 ? position : 1;
+      const queuedUserMessage = {
+        ...userMessage,
+        job_id: jobId,
+      };
 
-      const host = `${req.protocol}://${req.get('host')}`;
+      const queuePosition = await getQueuePosition(job);
+      const estimatedWait = estimateWaitSeconds(queuePosition, body.duration);
 
-      logger.info({ msg: 'Project created', projectId: project.id, jobId, requestId: res.locals['requestId'] });
+      await publishRealtimeEvent({
+        type: "project.message.created",
+        projectId: project.id,
+        message: queuedUserMessage,
+        timestamp: new Date().toISOString(),
+      });
+
+      await publishRealtimeEvent({
+        type: "render.job.queued",
+        jobId,
+        projectId: project.id,
+        triggerMessageId: userMessage.id,
+        status: "queued",
+        position: queuePosition,
+        estimatedWaitSeconds: estimatedWait,
+        timestamp: new Date().toISOString(),
+      });
+
+      const host = `${req.protocol}://${req.get("host")}`;
+
+      logger.info({
+        msg: "Project created",
+        projectId: project.id,
+        jobId,
+        requestId: res.locals["requestId"],
+      });
 
       res.status(202).json({
         projectId: project.id,
         jobId,
-        status: 'queued',
-        estimatedWaitSeconds: estimateWaitSeconds(queuePosition, body.duration),
+        status: "queued",
+        estimatedWaitSeconds: estimatedWait,
+
         statusUrl: `${host}/api/animation/status/${jobId}`,
       });
     } catch (err) {
@@ -166,8 +211,11 @@ export class ProjectController {
 
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const limit = Math.min(parseInt((req.query['limit'] as string) ?? '20', 10), 50);
-      const offset = parseInt((req.query['offset'] as string) ?? '0', 10);
+      const limit = Math.min(
+        parseInt((req.query["limit"] as string) ?? "20", 10),
+        50,
+      );
+      const offset = parseInt((req.query["offset"] as string) ?? "0", 10);
 
       const projects = await databaseService.listProjects(limit, offset);
       res.status(200).json({ projects, limit, offset });
@@ -190,7 +238,12 @@ export class ProjectController {
       ]);
 
       if (!project) {
-        res.status(404).json({ error: `Project "${projectId}" not found`, requestId: res.locals['requestId'] });
+        res
+          .status(404)
+          .json({
+            error: `Project "${projectId}" not found`,
+            requestId: res.locals["requestId"],
+          });
         return;
       }
 
@@ -225,8 +278,13 @@ export class ProjectController {
 
       const parse = chatSchema.safeParse(req.body);
       if (!parse.success) {
-        const errors = parse.error.errors.map((e) => e.message).join(', ');
-        res.status(400).json({ error: `Validation failed: ${errors}`, requestId: res.locals['requestId'] });
+        const errors = parse.error.errors.map((e) => e.message).join(", ");
+        res
+          .status(400)
+          .json({
+            error: `Validation failed: ${errors}`,
+            requestId: res.locals["requestId"],
+          });
         return;
       }
 
@@ -235,14 +293,20 @@ export class ProjectController {
       // Load project
       const project = await databaseService.getProject(projectId);
       if (!project) {
-        res.status(404).json({ error: `Project "${projectId}" not found`, requestId: res.locals['requestId'] });
+        res
+          .status(404)
+          .json({
+            error: `Project "${projectId}" not found`,
+            requestId: res.locals["requestId"],
+          });
         return;
       }
 
       if (!project.enriched_brief) {
         res.status(409).json({
-          error: 'No completed generation found for this project. Wait for the initial render to finish before sending edits.',
-          requestId: res.locals['requestId'],
+          error:
+            "No completed generation found for this project. Wait for the initial render to finish before sending edits.",
+          requestId: res.locals["requestId"],
         });
         return;
       }
@@ -252,14 +316,16 @@ export class ProjectController {
       const jobId = uuidv4();
 
       // Build compact context — this is the token-saving step
-      const editContext: EditContext = buildEditContext(project.enriched_brief as EnrichedBrief);
+      const editContext: EditContext = buildEditContext(
+        project.enriched_brief as EnrichedBrief,
+      );
 
       // Persist user edit message
       const userMessage = await databaseService.createMessage({
         projectId,
-        role: 'user',
+        role: "user",
         content: body.message,
-        messageType: 'edit',
+        messageType: "edit",
       });
 
       const jobData: AnimationJobData = {
@@ -276,19 +342,47 @@ export class ProjectController {
       const job = await renderQueue.add(jobId, jobData, { jobId });
       await databaseService.setMessageJobId(userMessage.id, jobId);
 
-      const waitingJobs = await renderQueue.getWaiting();
-      const position = waitingJobs.findIndex((j) => j.id === job.id) + 1;
-      const queuePosition = position > 0 ? position : 1;
+      const queuedUserMessage = {
+        ...userMessage,
+        job_id: jobId,
+      };
 
-      const host = `${req.protocol}://${req.get('host')}`;
+      const queuePosition = await getQueuePosition(job);
+      const estimatedWait = estimateWaitSeconds(queuePosition, duration);
 
-      logger.info({ msg: 'Edit job enqueued', projectId, jobId, requestId: res.locals['requestId'] });
+      await publishRealtimeEvent({
+        type: "project.message.created",
+        projectId,
+        message: queuedUserMessage,
+        timestamp: new Date().toISOString(),
+      });
+
+      await publishRealtimeEvent({
+        type: "render.job.queued",
+        jobId,
+        projectId,
+        triggerMessageId: userMessage.id,
+        status: "queued",
+        position: queuePosition,
+        estimatedWaitSeconds: estimatedWait,
+        timestamp: new Date().toISOString(),
+      });
+
+      const host = `${req.protocol}://${req.get("host")}`;
+
+      logger.info({
+        msg: "Edit job enqueued",
+        projectId,
+        jobId,
+        requestId: res.locals["requestId"],
+      });
 
       res.status(202).json({
         projectId,
         jobId,
-        status: 'queued',
-        estimatedWaitSeconds: estimateWaitSeconds(queuePosition, duration),
+        status: "queued",
+        estimatedWaitSeconds: estimatedWait,
+
         statusUrl: `${host}/api/animation/status/${jobId}`,
       });
     } catch (err) {

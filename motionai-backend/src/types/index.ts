@@ -16,9 +16,9 @@ export interface AnimationRequest {
   /** Duration of the animation in seconds (3–60) */
   duration: number;
   /** Output resolution */
-  resolution: '720p' | '1080p';
+  resolution: "720p" | "1080p";
   /** Visual style applied to the animation */
-  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+  style: "modern" | "minimal" | "bold" | "corporate";
 }
 
 /** Union of all possible status response shapes */
@@ -30,20 +30,20 @@ export type JobStatusResponse =
 
 export interface QueuedStatusResponse {
   jobId: string;
-  status: 'queued';
+  status: "queued";
   position: number;
 }
 
 export interface RenderingStatusResponse {
   jobId: string;
-  status: 'rendering';
+  status: "rendering";
   /** Render progress from 0 to 100 */
   progress: number;
 }
 
 export interface CompletedStatusResponse {
   jobId: string;
-  status: 'completed';
+  status: "completed";
   /** Pre-signed S3 URL valid for 1 hour */
   downloadUrl: string;
   duration: number;
@@ -52,7 +52,7 @@ export interface CompletedStatusResponse {
 
 export interface FailedStatusResponse {
   jobId: string;
-  status: 'failed';
+  status: "failed";
   /** Human-readable error message — never exposes stack traces */
   error: string;
 }
@@ -68,9 +68,9 @@ export interface AnimationJobData {
   /** Animation duration in seconds */
   duration: number;
   /** Output resolution */
-  resolution: '720p' | '1080p';
+  resolution: "720p" | "1080p";
   /** Visual style */
-  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+  style: "modern" | "minimal" | "bold" | "corporate";
   /** Unique job identifier (same as BullMQ job ID) */
   jobId: string;
   /** Human-readable error captured on failure */
@@ -104,9 +104,9 @@ export interface Project {
   created_at: string;
   updated_at: string;
   title: string;
-  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+  style: "modern" | "minimal" | "bold" | "corporate";
   duration: number;
-  resolution: '720p' | '1080p';
+  resolution: "720p" | "1080p";
   latest_job_id: string | null;
   latest_video_url: string | null;
   /** Serialised EnrichedBrief — reused for token-efficient edit calls */
@@ -118,18 +118,18 @@ export interface Message {
   id: string;
   project_id: string;
   created_at: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   job_id: string | null;
-  message_type: 'initial_generate' | 'edit' | 'completion' | 'error';
+  message_type: "initial_generate" | "edit" | "completion" | "error";
 }
 
 /** Body shape for POST /api/projects */
 export interface CreateProjectRequest {
   prompt: string;
   duration: number;
-  resolution: '720p' | '1080p';
-  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+  resolution: "720p" | "1080p";
+  style: "modern" | "minimal" | "bold" | "corporate";
 }
 
 /** Body shape for POST /api/projects/:id/chat */
@@ -141,7 +141,7 @@ export interface ChatRequest {
    * If omitted, the project's existing values are reused.
    */
   duration?: number;
-  resolution?: '720p' | '1080p';
+  resolution?: "720p" | "1080p";
 }
 
 /**
@@ -157,7 +157,7 @@ export interface EditContext {
   /** Mood tag */
   animationMood: string;
   /** Font style */
-  fontStyle: 'sans-serif' | 'monospace' | 'serif' | 'display';
+  fontStyle: "sans-serif" | "monospace" | "serif" | "display";
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ export interface EnrichedBrief {
   /** Array of 4–6 hex color codes matching the requested style */
   colorPalette: string[];
   /** CSS font-family keyword */
-  fontStyle: 'sans-serif' | 'monospace' | 'serif' | 'display';
+  fontStyle: "sans-serif" | "monospace" | "serif" | "display";
   /** Emotional tone of the animation */
   animationMood: string;
   keyScenes: KeyScene[];
@@ -196,9 +196,162 @@ export interface RenderOptions {
   /** Animation duration in seconds */
   duration: number;
   /** Output resolution */
-  resolution: '720p' | '1080p';
+  resolution: "720p" | "1080p";
   /** Callback invoked with render progress 0–100 */
   onProgress: (progress: number) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Realtime / WebSocket
+// ---------------------------------------------------------------------------
+
+/** High-level render stage derived from BullMQ progress updates. */
+export type RenderJobStage =
+  | "queued"
+  | "starting"
+  | "enriching_prompt"
+  | "generating_code"
+  | "validating_code"
+  | "bundling"
+  | "rendering"
+  | "uploading"
+  | "persisting";
+
+/** Client → server websocket messages. */
+export type RealtimeClientMessage =
+  | SubscribeJobMessage
+  | UnsubscribeJobMessage
+  | SubscribeProjectMessage
+  | UnsubscribeProjectMessage
+  | PingMessage;
+
+export interface SubscribeJobMessage {
+  type: "subscribe_job";
+  jobId: string;
+}
+
+export interface UnsubscribeJobMessage {
+  type: "unsubscribe_job";
+  jobId: string;
+}
+
+export interface SubscribeProjectMessage {
+  type: "subscribe_project";
+  projectId: string;
+}
+
+export interface UnsubscribeProjectMessage {
+  type: "unsubscribe_project";
+  projectId: string;
+}
+
+export interface PingMessage {
+  type: "ping";
+  timestamp?: string;
+}
+
+/** Server → client websocket events. */
+export type RealtimeServerEvent =
+  | RealtimeConnectionReadyEvent
+  | RealtimeSubscriptionConfirmedEvent
+  | RealtimePongEvent
+  | RealtimeErrorEvent
+  | RealtimeProjectSnapshotEvent
+  | RealtimeProjectUpdatedEvent
+  | RealtimeProjectMessageCreatedEvent
+  | RealtimeJobQueuedEvent
+  | RealtimeJobProgressEvent
+  | RealtimeJobCompletedEvent
+  | RealtimeJobFailedEvent;
+
+export interface RealtimeConnectionReadyEvent {
+  type: "connection.ready";
+  connectionId: string;
+  timestamp: string;
+}
+
+export interface RealtimeSubscriptionConfirmedEvent {
+  type: "subscription.confirmed";
+  scope: "job" | "project";
+  jobId?: string;
+  projectId?: string;
+  timestamp: string;
+}
+
+export interface RealtimePongEvent {
+  type: "pong";
+  timestamp: string;
+}
+
+export interface RealtimeErrorEvent {
+  type: "error";
+  error: string;
+  code?: "INVALID_MESSAGE" | "PROJECT_NOT_FOUND" | "INTERNAL_ERROR";
+  timestamp: string;
+}
+
+export interface RealtimeProjectSnapshotEvent {
+  type: "project.snapshot";
+  projectId: string;
+  project: Project;
+  messages: Message[];
+  latestJobStatus: JobStatusResponse | null;
+  timestamp: string;
+}
+
+export interface RealtimeProjectUpdatedEvent {
+  type: "project.updated";
+  projectId: string;
+  project: Project;
+  timestamp: string;
+}
+
+export interface RealtimeProjectMessageCreatedEvent {
+  type: "project.message.created";
+  projectId: string;
+  message: Message;
+  timestamp: string;
+}
+
+export interface RealtimeJobQueuedEvent {
+  type: "render.job.queued";
+  jobId: string;
+  projectId?: string;
+  triggerMessageId?: string;
+  status: "queued";
+  position: number;
+  estimatedWaitSeconds: number;
+  timestamp: string;
+}
+
+export interface RealtimeJobProgressEvent {
+  type: "render.job.progress";
+  jobId: string;
+  projectId?: string;
+  status: "rendering";
+  progress: number;
+  stage: RenderJobStage;
+  timestamp: string;
+}
+
+export interface RealtimeJobCompletedEvent {
+  type: "render.job.completed";
+  jobId: string;
+  projectId?: string;
+  status: "completed";
+  downloadUrl: string;
+  duration: number;
+  resolution: string;
+  timestamp: string;
+}
+
+export interface RealtimeJobFailedEvent {
+  type: "render.job.failed";
+  jobId: string;
+  projectId?: string;
+  status: "failed";
+  error: string;
+  timestamp: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +362,7 @@ export interface RenderOptions {
 export class SanitizationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'SanitizationError';
+    this.name = "SanitizationError";
     // Maintains proper prototype chain in ES5 compiled output
     Object.setPrototypeOf(this, SanitizationError.prototype);
   }

@@ -19,6 +19,7 @@
     "@remotion/bundler": "^4.0.228",
     "@remotion/renderer": "^4.0.228",
     "@supabase/supabase-js": "^2.105.3",
+    "@types/ws": "^8.18.1",
     "bullmq": "^5.12.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -28,6 +29,7 @@
     "remotion": "^4.0.228",
     "uuid": "^10.0.0",
     "winston": "^3.13.0",
+    "ws": "^8.20.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

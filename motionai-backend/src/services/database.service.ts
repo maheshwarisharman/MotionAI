@@ -4,9 +4,9 @@
  * Keeps all SQL-level concerns in one place so controllers stay thin.
  */
 
-import { getSupabaseClient } from './supabase.service.js';
-import { logger } from '../utils/logger.js';
-import type { Project, Message, EnrichedBrief } from '../types/index.js';
+import { getSupabaseClient } from "./supabase.service.js";
+import { logger } from "../utils/logger.js";
+import type { Project, Message, EnrichedBrief } from "../types/index.js";
 
 export class DatabaseService {
   // -------------------------------------------------------------------------
@@ -18,13 +18,13 @@ export class DatabaseService {
    */
   async createProject(data: {
     title: string;
-    style: Project['style'];
+    style: Project["style"];
     duration: number;
-    resolution: Project['resolution'];
+    resolution: Project["resolution"];
   }): Promise<Project> {
     const db = getSupabaseClient();
     const { data: row, error } = await db
-      .from('projects')
+      .from("projects")
       .insert({
         title: data.title,
         style: data.style,
@@ -35,7 +35,7 @@ export class DatabaseService {
       .single();
 
     if (error) {
-      logger.error({ msg: 'DB: createProject failed', error: error.message });
+      logger.error({ msg: "DB: createProject failed", error: error.message });
       throw new Error(`Database error: ${error.message}`);
     }
     return row as Project;
@@ -47,14 +47,14 @@ export class DatabaseService {
   async getProject(projectId: string): Promise<Project | null> {
     const db = getSupabaseClient();
     const { data: row, error } = await db
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null; // row not found
-      logger.error({ msg: 'DB: getProject failed', error: error.message });
+      if (error.code === "PGRST116") return null; // row not found
+      logger.error({ msg: "DB: getProject failed", error: error.message });
       throw new Error(`Database error: ${error.message}`);
     }
     return row as Project;
@@ -66,13 +66,13 @@ export class DatabaseService {
   async listProjects(limit = 20, offset = 0): Promise<Project[]> {
     const db = getSupabaseClient();
     const { data: rows, error } = await db
-      .from('projects')
-      .select('*')
-      .order('updated_at', { ascending: false })
+      .from("projects")
+      .select("*")
+      .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) {
-      logger.error({ msg: 'DB: listProjects failed', error: error.message });
+      logger.error({ msg: "DB: listProjects failed", error: error.message });
       throw new Error(`Database error: ${error.message}`);
     }
     return (rows ?? []) as Project[];
@@ -93,17 +93,49 @@ export class DatabaseService {
   ): Promise<void> {
     const db = getSupabaseClient();
     const { error } = await db
-      .from('projects')
+      .from("projects")
       .update({
         latest_job_id: data.latestJobId,
         latest_video_url: data.latestVideoUrl,
         enriched_brief: data.enrichedBrief,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', projectId);
+      .eq("id", projectId);
 
     if (error) {
-      logger.error({ msg: 'DB: updateProjectAfterRender failed', error: error.message });
+      logger.error({
+        msg: "DB: updateProjectAfterRender failed",
+        error: error.message,
+      });
+      throw new Error(`Database error: ${error.message}`);
+    }
+  }
+
+  /**
+   * Updates only the latest render metadata while preserving the stored enriched brief.
+   */
+  async updateProjectLatestRender(
+    projectId: string,
+    data: {
+      latestJobId: string;
+      latestVideoUrl: string;
+    },
+  ): Promise<void> {
+    const db = getSupabaseClient();
+    const { error } = await db
+      .from("projects")
+      .update({
+        latest_job_id: data.latestJobId,
+        latest_video_url: data.latestVideoUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", projectId);
+
+    if (error) {
+      logger.error({
+        msg: "DB: updateProjectLatestRender failed",
+        error: error.message,
+      });
       throw new Error(`Database error: ${error.message}`);
     }
   }
@@ -117,14 +149,14 @@ export class DatabaseService {
    */
   async createMessage(data: {
     projectId: string;
-    role: Message['role'];
+    role: Message["role"];
     content: string;
     jobId?: string;
-    messageType: Message['message_type'];
+    messageType: Message["message_type"];
   }): Promise<Message> {
     const db = getSupabaseClient();
     const { data: row, error } = await db
-      .from('messages')
+      .from("messages")
       .insert({
         project_id: data.projectId,
         role: data.role,
@@ -136,7 +168,7 @@ export class DatabaseService {
       .single();
 
     if (error) {
-      logger.error({ msg: 'DB: createMessage failed', error: error.message });
+      logger.error({ msg: "DB: createMessage failed", error: error.message });
       throw new Error(`Database error: ${error.message}`);
     }
     return row as Message;
@@ -148,13 +180,13 @@ export class DatabaseService {
   async getMessages(projectId: string): Promise<Message[]> {
     const db = getSupabaseClient();
     const { data: rows, error } = await db
-      .from('messages')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('created_at', { ascending: true });
+      .from("messages")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true });
 
     if (error) {
-      logger.error({ msg: 'DB: getMessages failed', error: error.message });
+      logger.error({ msg: "DB: getMessages failed", error: error.message });
       throw new Error(`Database error: ${error.message}`);
     }
     return (rows ?? []) as Message[];
@@ -166,12 +198,12 @@ export class DatabaseService {
   async setMessageJobId(messageId: string, jobId: string): Promise<void> {
     const db = getSupabaseClient();
     const { error } = await db
-      .from('messages')
+      .from("messages")
       .update({ job_id: jobId })
-      .eq('id', messageId);
+      .eq("id", messageId);
 
     if (error) {
-      logger.error({ msg: 'DB: setMessageJobId failed', error: error.message });
+      logger.error({ msg: "DB: setMessageJobId failed", error: error.message });
       // Non-fatal — log and continue
     }
   }
@@ -183,13 +215,13 @@ export class DatabaseService {
     projectId: string,
     jobId: string,
     videoUrl: string,
-  ): Promise<void> {
-    await this.createMessage({
+  ): Promise<Message> {
+    return this.createMessage({
       projectId,
-      role: 'assistant',
+      role: "assistant",
       content: `Render complete. Video available at: ${videoUrl}`,
       jobId,
-      messageType: 'completion',
+      messageType: "completion",
     });
   }
 
@@ -200,13 +232,13 @@ export class DatabaseService {
     projectId: string,
     jobId: string,
     reason: string,
-  ): Promise<void> {
-    await this.createMessage({
+  ): Promise<Message> {
+    return this.createMessage({
       projectId,
-      role: 'assistant',
+      role: "assistant",
       content: `Render failed: ${reason}`,
       jobId,
-      messageType: 'error',
+      messageType: "error",
     });
   }
 }
