@@ -219,7 +219,7 @@ export class DatabaseService {
     return this.createMessage({
       projectId,
       role: "assistant",
-      content: `Render complete. Video available at: ${videoUrl}`,
+      content: `Render complete.`,
       jobId,
       messageType: "completion",
     });
