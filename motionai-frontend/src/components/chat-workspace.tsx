@@ -1,18 +1,15 @@
 "use client";
 
-import {
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
   ArrowUp,
   CheckCircle2,
+  Clapperboard,
   Loader2,
   MessageSquareText,
   PlayCircle,
+  SlidersHorizontal,
   Sparkles,
   Wifi,
   WifiOff,
@@ -27,6 +24,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Message = {
   id: string;
@@ -185,6 +189,18 @@ type PendingMessage = {
   content: string;
 };
 
+const DURATION_OPTIONS = [15, 30, 45, 60] as const;
+const RESOLUTION_OPTIONS = [
+  { value: "720p", label: "Standard" },
+  { value: "1080p", label: "High" },
+] as const;
+const STYLE_OPTIONS = [
+  { value: "modern", label: "Modern" },
+  { value: "minimal", label: "Minimal" },
+  { value: "bold", label: "Bold" },
+  { value: "corporate", label: "Corporate" },
+] as const;
+
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3000";
 
@@ -218,11 +234,11 @@ function statusTone(jobStatus: LatestJobStatus): string {
     case "failed":
       return "text-destructive";
     case "completed":
-      return "text-emerald-400";
+      return "text-foreground";
     case "rendering":
     case "queued":
     case "creating":
-      return "text-sky-300";
+      return "text-foreground";
     case "idle":
       return "text-muted-foreground";
   }
@@ -231,6 +247,10 @@ function statusTone(jobStatus: LatestJobStatus): string {
 export function ChatWorkspace() {
   const [draft, setDraft] = useState("");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [duration, setDuration] =
+    useState<(typeof DURATION_OPTIONS)[number]>(30);
+  const [resolution, setResolution] = useState<Project["resolution"]>("1080p");
+  const [style, setStyle] = useState<Project["style"]>("modern");
   const [project, setProject] = useState<Project | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -247,26 +267,31 @@ export function ChatWorkspace() {
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
-  const visibleMessages = [
-    ...messages.map((message) => ({ ...message, isPending: false })),
-    ...pendingMessages.map((message) => ({
-      id: message.id,
-      project_id: projectId ?? "pending",
-      created_at: new Date().toISOString(),
-      role: "user" as const,
-      content: message.content,
-      job_id: null,
-      message_type: projectId ? "edit" as const : "initial_generate" as const,
-      isPending: true,
-    })),
-  ];
+  const visibleMessages = useMemo(
+    () => [
+      ...messages.map((message) => ({ ...message, isPending: false })),
+      ...pendingMessages.map((message) => ({
+        id: message.id,
+        project_id: projectId ?? "pending",
+        created_at: new Date().toISOString(),
+        role: "user" as const,
+        content: message.content,
+        job_id: null,
+        message_type: projectId
+          ? ("edit" as const)
+          : ("initial_generate" as const),
+        isPending: true,
+      })),
+    ],
+    [messages, pendingMessages, projectId],
+  );
 
   const latestVideoUrl =
     jobStatus.status === "completed"
       ? jobStatus.downloadUrl
       : project?.latest_job_id && videoByJobId[project.latest_job_id]
         ? videoByJobId[project.latest_job_id]
-        : project?.latest_video_url ?? null;
+        : (project?.latest_video_url ?? null);
 
   const isJobActive =
     jobStatus.status === "creating" ||
@@ -352,7 +377,9 @@ export function ChatWorkspace() {
 
       if (event.message.role === "user") {
         setPendingMessages((current) =>
-          current.filter((pending) => pending.content !== event.message.content),
+          current.filter(
+            (pending) => pending.content !== event.message.content,
+          ),
         );
       }
       return;
@@ -455,7 +482,7 @@ export function ChatWorkspace() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [projectId, handleRealtimeEvent]);
+  }, [projectId]);
 
   const submitPrompt = async () => {
     const content = draft.trim();
@@ -481,9 +508,9 @@ export function ChatWorkspace() {
           },
           body: JSON.stringify({
             prompt: content,
-            duration: 30,
-            resolution: "1080p",
-            style: "modern",
+            duration,
+            resolution,
+            style,
           }),
         });
 
@@ -501,15 +528,18 @@ export function ChatWorkspace() {
           estimatedWaitSeconds: payload.estimatedWaitSeconds,
         });
       } else {
-        const response = await fetch(`${BACKEND_URL}/api/projects/${projectId}/chat`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `${BACKEND_URL}/api/projects/${projectId}/chat`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              message: content,
+            }),
           },
-          body: JSON.stringify({
-            message: content,
-          }),
-        });
+        );
 
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -554,8 +584,8 @@ export function ChatWorkspace() {
     return (
       <main className="flex-1 flex flex-col items-center justify-center px-4 md:px-8 py-20">
         <div className="text-center max-w-4xl w-full space-y-6 mb-12 animate-in fade-in slide-in-from-bottom-4 duration-1000">
-          <div className="inline-flex items-center gap-2 rounded-full border border-sky-400/20 bg-sky-500/10 px-4 py-1.5 text-sm text-sky-200">
-            <Sparkles className="h-4 w-4" />
+          <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-4 py-1.5 text-sm font-medium text-foreground uppercase tracking-widest shadow-sm">
+            <Sparkles className="h-4 w-4 text-primary" />
             Live generation in chat
           </div>
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
@@ -568,32 +598,113 @@ export function ChatWorkspace() {
         </div>
 
         <div className="w-full max-w-3xl mx-auto animate-in fade-in zoom-in-95 duration-700 delay-150 fill-mode-both">
-          <div className="w-full rounded-[28px] border border-white/10 bg-neutral-950/80 shadow-[0_30px_120px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="w-full overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] shadow-2xl">
             <Textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isSubmitting}
               placeholder="Describe the animation you want to generate..."
-              className="min-h-[160px] resize-none border-0 bg-transparent p-6 text-base md:text-lg shadow-none focus-visible:ring-0"
+              className="min-h-[140px] resize-none border-0 bg-transparent p-6 text-base md:text-lg shadow-none focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/60"
             />
 
-            <div className="flex items-center justify-between border-t border-white/10 px-4 py-3">
-              <div className="pl-2 text-sm text-muted-foreground">
-                The full chat opens as soon as you generate.
+            <div className="border-t border-white/5 bg-[#111] px-5 py-4">
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    Settings
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1 rounded-md border border-white/10 bg-black/40 p-1">
+                    {DURATION_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setDuration(option)}
+                        className={`rounded-[4px] px-3 py-1.5 text-xs font-medium transition-all ${
+                          duration === option
+                            ? "bg-white text-black shadow-sm"
+                            : "bg-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {option}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <Clapperboard className="h-3.5 w-3.5" />
+                      Resolution
+                    </div>
+                    <Select
+                      value={resolution}
+                      onValueChange={(value) =>
+                        setResolution(value as Project["resolution"])
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {RESOLUTION_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}{" "}
+                            <span className="opacity-50 ml-1">
+                              · {option.value}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+
+                  <label className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Art Style
+                    </div>
+                    <Select
+                      value={style}
+                      onValueChange={(value) =>
+                        setStyle(value as Project["style"])
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STYLE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 border-t border-white/5 pt-4 mt-2">
+                  <div className="text-xs text-muted-foreground/80">
+                    The full workspace opens automatically after generation
+                    begins.
+                  </div>
+                  <Button
+                    onClick={() => void submitPrompt()}
+                    disabled={!draft.trim() || isSubmitting}
+                    className="h-10 rounded-md bg-white px-6 font-medium text-black hover:bg-neutral-200 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:hover:scale-100"
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-2 h-4 w-4" />
+                    )}
+                    Generate Video
+                  </Button>
+                </div>
               </div>
-              <Button
-                onClick={() => void submitPrompt()}
-                disabled={!draft.trim() || isSubmitting}
-                size="icon"
-                className="h-10 w-10 rounded-xl bg-sky-400 text-slate-950 hover:bg-sky-300"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ArrowUp className="h-4 w-4" />
-                )}
-              </Button>
             </div>
           </div>
         </div>
@@ -602,9 +713,9 @@ export function ChatWorkspace() {
   }
 
   return (
-    <main className="flex-1 px-4 md:px-8 py-6">
-      <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-6 xl:grid xl:grid-cols-[minmax(0,1.3fr)_420px]">
-        <Card className="min-h-[calc(100vh-9rem)] border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
+    <main className="flex min-h-0 flex-1 flex-col px-4 py-6 md:px-8">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1500px] flex-1 flex-col gap-6 xl:grid xl:grid-cols-[minmax(0,1.3fr)_420px]">
+        <Card className="flex min-h-0 border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur xl:h-[calc(100dvh-8rem)]">
           <CardHeader className="border-b border-white/10">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="space-y-1">
@@ -619,7 +730,7 @@ export function ChatWorkspace() {
 
               <div className="flex items-center gap-3">
                 <div
-                  className={`inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-sm ${statusTone(jobStatus)}`}
+                  className={`inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium ${statusTone(jobStatus)}`}
                 >
                   {connectionState === "connected" ? (
                     <Wifi className="h-4 w-4" />
@@ -632,12 +743,13 @@ export function ChatWorkspace() {
             </div>
           </CardHeader>
 
-          <CardContent className="flex h-full flex-1 flex-col px-0">
-            <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5 md:px-6">
+          <CardContent className="flex min-h-0 flex-1 flex-col px-0">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-5 md:px-6">
               {visibleMessages.map((message) => {
                 const isAssistant = message.role === "assistant";
-                const videoUrl =
-                  message.job_id ? videoByJobId[message.job_id] : null;
+                const videoUrl = message.job_id
+                  ? videoByJobId[message.job_id]
+                  : null;
 
                 return (
                   <div
@@ -651,10 +763,10 @@ export function ChatWorkspace() {
                     )}
 
                     <div
-                      className={`max-w-[85%] space-y-3 rounded-3xl px-4 py-3 ${
+                      className={`max-w-[85%] space-y-3 rounded-xl px-5 py-4 ${
                         isAssistant
-                          ? "bg-white/5 text-foreground ring-1 ring-white/10"
-                          : "bg-sky-400 text-slate-950"
+                          ? "bg-white/[0.03] text-foreground border border-white/10 shadow-sm"
+                          : "bg-neutral-100 text-neutral-950 shadow-sm"
                       } ${"isPending" in message && message.isPending ? "opacity-75" : ""}`}
                     >
                       <p className="whitespace-pre-wrap text-sm leading-6 md:text-[15px]">
@@ -697,8 +809,8 @@ export function ChatWorkspace() {
               <div ref={messageEndRef} />
             </div>
 
-            <div className="border-t border-white/10 px-4 py-4 md:px-6">
-              <div className="rounded-[24px] border border-white/10 bg-black/30">
+            <div className="border-t border-white/10 px-4 py-4 md:px-6 bg-[#0a0a0a]">
+              <div className="rounded-xl border border-white/10 bg-[#111] shadow-sm">
                 <Textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
@@ -709,11 +821,11 @@ export function ChatWorkspace() {
                       ? "Wait for the current render to finish before sending another edit…"
                       : "Ask for an edit, a new scene, or a refinement…"
                   }
-                  className="min-h-[120px] resize-none border-0 bg-transparent p-5 shadow-none focus-visible:ring-0"
+                  className="min-h-[120px] resize-none border-0 bg-transparent p-5 shadow-none focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/60"
                 />
 
-                <div className="flex items-center justify-between border-t border-white/10 px-4 py-3">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between border-t border-white/5 bg-black/20 px-4 py-3 rounded-b-xl">
+                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground/80">
                     <MessageSquareText className="h-4 w-4" />
                     {project
                       ? `${project.style} · ${project.duration}s · ${project.resolution}`
@@ -723,14 +835,14 @@ export function ChatWorkspace() {
                   <Button
                     onClick={() => void submitPrompt()}
                     disabled={!draft.trim() || isSubmitting || isJobActive}
-                    size="icon"
-                    className="h-10 w-10 rounded-xl bg-sky-400 text-slate-950 hover:bg-sky-300"
+                    className="h-9 rounded-md bg-white text-black hover:bg-neutral-200 px-4 font-medium"
                   >
                     {isSubmitting ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
-                      <ArrowUp className="h-4 w-4" />
+                      <ArrowUp className="mr-2 h-4 w-4" />
                     )}
+                    Send
                   </Button>
                 </div>
               </div>
@@ -742,7 +854,7 @@ export function ChatWorkspace() {
           <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-xl">
-                <PlayCircle className="h-5 w-5 text-sky-300" />
+                <PlayCircle className="h-5 w-5 text-foreground" />
                 Latest Render
               </CardTitle>
               <CardDescription>
@@ -765,7 +877,9 @@ export function ChatWorkspace() {
                 </div>
               )}
 
-              <div className={`flex items-center gap-2 text-sm ${statusTone(jobStatus)}`}>
+              <div
+                className={`flex items-center gap-2 text-sm ${statusTone(jobStatus)}`}
+              >
                 {jobStatus.status === "completed" ? (
                   <CheckCircle2 className="h-4 w-4" />
                 ) : (

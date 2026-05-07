@@ -26,7 +26,7 @@ export default function Header() {
           </Link>
           <Button
             render={<Link href="/signup" />}
-            className="rounded-md px-6 h-9 bg-blue-600 hover:bg-blue-700 text-white border-0"
+            className="h-9 rounded-md border border-white/10 bg-white px-6 text-black hover:bg-white/85"
           >
             Sign Up
           </Button>

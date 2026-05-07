@@ -122,9 +122,12 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply min-h-screen bg-background text-foreground;
+    background-image:
+      radial-gradient(circle at top, rgba(255, 255, 255, 0.08), transparent 32%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 24%);
   }
   html {
-    @apply font-sans;
+    @apply min-h-screen font-sans;
   }
 }
