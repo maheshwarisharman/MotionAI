@@ -980,10 +980,6 @@ export function ChatWorkspace() {
     return (
       <main className="flex-1 flex flex-col items-center justify-center px-4 md:px-8 py-20">
         <div className="text-center max-w-4xl w-full space-y-6 mb-12 animate-in fade-in slide-in-from-bottom-4 duration-1000">
-          <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-4 py-1.5 text-sm font-medium text-foreground uppercase tracking-widest shadow-sm">
-            <Sparkles className="h-4 w-4 text-primary" />
-            Live generation in chat
-          </div>
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
             What do you want to create?
           </h1>
