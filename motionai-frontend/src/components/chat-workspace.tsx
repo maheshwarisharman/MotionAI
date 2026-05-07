@@ -212,10 +212,7 @@ const RESOLUTION_OPTIONS = [
   { value: "1080p", label: "High" },
 ] as const;
 const STYLE_OPTIONS = [
-  { value: "modern", label: "Modern" },
-  { value: "minimal", label: "Minimal" },
-  { value: "bold", label: "Bold" },
-  { value: "corporate", label: "Corporate" },
+  { value: "modern", label: "Modern" }
 ] as const;
 
 const BACKEND_URL =
