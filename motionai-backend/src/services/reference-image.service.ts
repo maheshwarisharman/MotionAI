@@ -14,7 +14,7 @@ import type {
 } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 
-const MAX_REFERENCE_IMAGES = 5;
+const MAX_REFERENCE_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 

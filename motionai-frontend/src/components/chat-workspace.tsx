@@ -1,14 +1,17 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
   ArrowUp,
   CheckCircle2,
   Clapperboard,
+  ImagePlus,
   Loader2,
   MessageSquareText,
   PlayCircle,
+  X,
   SlidersHorizontal,
   Sparkles,
   Wifi,
@@ -189,6 +192,12 @@ type PendingMessage = {
   content: string;
 };
 
+type SelectedAttachment = {
+  id: string;
+  name: string;
+  dataUrl: string;
+};
+
 const DURATION_OPTIONS = [15, 30, 45, 60] as const;
 const RESOLUTION_OPTIONS = [
   { value: "720p", label: "Standard" },
@@ -203,6 +212,14 @@ const STYLE_OPTIONS = [
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3000";
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
 
 function getWebSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
@@ -246,6 +263,7 @@ function statusTone(jobStatus: LatestJobStatus): string {
 
 export function ChatWorkspace() {
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [duration, setDuration] =
     useState<(typeof DURATION_OPTIONS)[number]>(30);
@@ -266,6 +284,7 @@ export function ChatWorkspace() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const visibleMessages = useMemo(
     () => [
@@ -490,6 +509,11 @@ export function ChatWorkspace() {
       return;
     }
 
+    let submitted = false;
+    const referenceImages = attachments.map((attachment) => ({
+      name: attachment.name,
+      dataUrl: attachment.dataUrl,
+    }));
     const pendingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setWorkspaceOpen(true);
     setPendingMessages((current) => [...current, { id: pendingId, content }]);
@@ -511,6 +535,7 @@ export function ChatWorkspace() {
             duration,
             resolution,
             style,
+            referenceImages,
           }),
         });
 
@@ -527,6 +552,7 @@ export function ChatWorkspace() {
           position: 0,
           estimatedWaitSeconds: payload.estimatedWaitSeconds,
         });
+        submitted = true;
       } else {
         const response = await fetch(
           `${BACKEND_URL}/api/projects/${projectId}/chat`,
@@ -537,6 +563,7 @@ export function ChatWorkspace() {
             },
             body: JSON.stringify({
               message: content,
+              referenceImages,
             }),
           },
         );
@@ -553,6 +580,7 @@ export function ChatWorkspace() {
           position: 0,
           estimatedWaitSeconds: payload.estimatedWaitSeconds,
         });
+        submitted = true;
       }
     } catch (submissionError) {
       setPendingMessages((current) =>
@@ -569,9 +597,97 @@ export function ChatWorkspace() {
         error: message,
       });
     } finally {
+      if (submitted) {
+        setAttachments([]);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      }
       setIsSubmitting(false);
     }
   };
+
+  const handleAttachmentPick = async (files: FileList | null) => {
+    if (!files?.length) {
+      return;
+    }
+
+    const fileList = Array.from(files);
+    const remainingSlots = MAX_ATTACHMENTS - attachments.length;
+
+    if (remainingSlots <= 0) {
+      setError(`You can attach up to ${MAX_ATTACHMENTS} images per prompt.`);
+      return;
+    }
+
+    const nextFiles = fileList.slice(0, remainingSlots);
+    if (fileList.length > remainingSlots) {
+      setError(`Only the first ${remainingSlots} image${remainingSlots === 1 ? "" : "s"} were added.`);
+    } else {
+      setError(null);
+    }
+
+    try {
+      const prepared = await Promise.all(
+        nextFiles.map(
+          (file) =>
+            new Promise<SelectedAttachment>((resolve, reject) => {
+              if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+                reject(new Error(`${file.name} is not a supported image type.`));
+                return;
+              }
+
+              if (file.size > MAX_ATTACHMENT_BYTES) {
+                reject(new Error(`${file.name} exceeds the 5MB size limit.`));
+                return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (typeof reader.result !== "string") {
+                  reject(new Error(`Could not read ${file.name}.`));
+                  return;
+                }
+
+                resolve({
+                  id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
+                  name: file.name,
+                  dataUrl: reader.result,
+                });
+              };
+              reader.onerror = () => {
+                reject(new Error(`Could not read ${file.name}.`));
+              };
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+
+      setAttachments((current) => [...current, ...prepared]);
+    } catch (attachmentError) {
+      setError(
+        attachmentError instanceof Error
+          ? attachmentError.message
+          : "Failed to attach image.",
+      );
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const removeAttachment = (attachmentId: string) => {
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.id !== attachmentId),
+    );
+    setError(null);
+  };
+
+  const attachmentSummary =
+    attachments.length === 0
+      ? `Attach up to ${MAX_ATTACHMENTS} images`
+      : `${attachments.length}/${MAX_ATTACHMENTS} image${attachments.length === 1 ? "" : "s"} attached`;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -599,6 +715,14 @@ export function ChatWorkspace() {
 
         <div className="w-full max-w-3xl mx-auto animate-in fade-in zoom-in-95 duration-700 delay-150 fill-mode-both">
           <div className="w-full overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] shadow-2xl">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              className="hidden"
+              onChange={(event) => void handleAttachmentPick(event.target.files)}
+            />
             <Textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -610,6 +734,57 @@ export function ChatWorkspace() {
 
             <div className="border-t border-white/5 bg-[#111] px-5 py-4">
               <div className="flex flex-col gap-5">
+                <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        Attachments
+                      </div>
+                      <div className="text-sm text-muted-foreground/80">
+                        {attachmentSummary}
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isSubmitting || attachments.length >= MAX_ATTACHMENTS}
+                      className="h-9 rounded-full border-white/10 bg-white/5 px-4 text-foreground hover:bg-white/10"
+                    >
+                      <ImagePlus className="mr-2 h-4 w-4" />
+                      Upload images
+                    </Button>
+                  </div>
+
+                  {attachments.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      {attachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
+                        >
+                          <Image
+                            src={attachment.dataUrl}
+                            alt={attachment.name}
+                            width={80}
+                            height={80}
+                            className="h-20 w-20 object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeAttachment(attachment.id)}
+                            className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                            aria-label={`Remove ${attachment.name}`}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                     <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -811,6 +986,14 @@ export function ChatWorkspace() {
 
             <div className="border-t border-white/10 px-4 py-4 md:px-6 bg-[#0a0a0a]">
               <div className="rounded-xl border border-white/10 bg-[#111] shadow-sm">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => void handleAttachmentPick(event.target.files)}
+                />
                 <Textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
@@ -824,26 +1007,77 @@ export function ChatWorkspace() {
                   className="min-h-[120px] resize-none border-0 bg-transparent p-5 shadow-none focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/60"
                 />
 
-                <div className="flex items-center justify-between border-t border-white/5 bg-black/20 px-4 py-3 rounded-b-xl">
-                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground/80">
-                    <MessageSquareText className="h-4 w-4" />
-                    {project
-                      ? `${project.style} · ${project.duration}s · ${project.resolution}`
-                      : "Preparing your project"}
-                  </div>
+                <div className="border-t border-white/5 bg-black/20 px-4 py-3 rounded-b-xl">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground/80">
+                        <MessageSquareText className="h-4 w-4" />
+                        {project
+                          ? `${project.style} · ${project.duration}s · ${project.resolution}`
+                          : "Preparing your project"}
+                      </div>
 
-                  <Button
-                    onClick={() => void submitPrompt()}
-                    disabled={!draft.trim() || isSubmitting || isJobActive}
-                    className="h-9 rounded-md bg-white text-black hover:bg-neutral-200 px-4 font-medium"
-                  >
-                    {isSubmitting ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <ArrowUp className="mr-2 h-4 w-4" />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={
+                            isSubmitting ||
+                            isJobActive ||
+                            attachments.length >= MAX_ATTACHMENTS
+                          }
+                          className="h-9 rounded-full border-white/10 bg-white/5 px-4 text-foreground hover:bg-white/10"
+                        >
+                          <ImagePlus className="mr-2 h-4 w-4" />
+                          Add images
+                        </Button>
+
+                        <Button
+                          onClick={() => void submitPrompt()}
+                          disabled={!draft.trim() || isSubmitting || isJobActive}
+                          className="h-9 rounded-md bg-white text-black hover:bg-neutral-200 px-4 font-medium"
+                        >
+                          {isSubmitting ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <ArrowUp className="mr-2 h-4 w-4" />
+                          )}
+                          Send
+                        </Button>
+                      </div>
+                    </div>
+
+                    {attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-3">
+                        {attachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
+                          >
+                            <Image
+                              src={attachment.dataUrl}
+                              alt={attachment.name}
+                              width={64}
+                              height={64}
+                              className="h-16 w-16 object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeAttachment(attachment.id)}
+                              className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                              aria-label={`Remove ${attachment.name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex items-center text-xs text-muted-foreground/75">
+                          {attachmentSummary}
+                        </div>
+                      </div>
                     )}
-                    Send
-                  </Button>
+                  </div>
                 </div>
               </div>
             </div>

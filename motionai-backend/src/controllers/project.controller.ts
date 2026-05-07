@@ -62,12 +62,12 @@ const createProjectSchema = z.object({
   duration: z.number().int().min(3).max(60),
   resolution: z.enum(["720p", "1080p"]),
   style: z.enum(["modern", "minimal", "bold", "corporate"]),
-  referenceImages: z.array(referenceImageSchema).max(5).optional(),
+  referenceImages: z.array(referenceImageSchema).max(4).optional(),
 });
 
 const chatSchema = z.object({
   message: z.string().min(3).max(1000),
-  referenceImages: z.array(referenceImageSchema).max(5).optional(),
+  referenceImages: z.array(referenceImageSchema).max(4).optional(),
   duration: z.number().int().min(3).max(60).optional(),
   resolution: z.enum(["720p", "1080p"]).optional(),
 });
