@@ -16,6 +16,7 @@ import {
   Sparkles,
   Wifi,
   WifiOff,
+  User,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -897,21 +898,13 @@ export function ChatWorkspace() {
                 <CardTitle className="text-xl">
                   {project?.title || "New MotionAI project"}
                 </CardTitle>
-                <CardDescription>
-                  Stay in chat while the backend streams progress and drops the
-                  rendered video here as soon as it finishes.
-                </CardDescription>
+
               </div>
 
               <div className="flex items-center gap-3">
                 <div
                   className={`inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium ${statusTone(jobStatus)}`}
                 >
-                  {connectionState === "connected" ? (
-                    <Wifi className="h-4 w-4" />
-                  ) : (
-                    <WifiOff className="h-4 w-4" />
-                  )}
                   {statusLabel(jobStatus)}
                 </div>
               </div>
@@ -968,7 +961,9 @@ export function ChatWorkspace() {
 
                     {!isAssistant && (
                       <Avatar className="mt-1">
-                        <AvatarFallback>YU</AvatarFallback>
+                        <AvatarFallback>
+                          <User className="h-4 w-4" aria-hidden="true" />
+                        </AvatarFallback>
                       </Avatar>
                     )}
                   </div>
@@ -1091,10 +1086,6 @@ export function ChatWorkspace() {
                 <PlayCircle className="h-5 w-5 text-foreground" />
                 Latest Render
               </CardTitle>
-              <CardDescription>
-                The newest completed video appears here automatically from the
-                websocket stream.
-              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {latestVideoUrl ? (
@@ -1126,20 +1117,6 @@ export function ChatWorkspace() {
             </CardContent>
           </Card>
 
-          <Card className="border-white/10 bg-neutral-950/70 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur">
-            <CardHeader>
-              <CardTitle>Realtime Connection</CardTitle>
-              <CardDescription>
-                Frontend is now listening on the backend websocket instead of
-                polling a status endpoint.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm text-muted-foreground">
-              <div>Connection: {connectionState}</div>
-              <div>Project ID: {projectId ?? "Creating..."}</div>
-              <div>Messages: {messages.length + pendingMessages.length}</div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </main>
