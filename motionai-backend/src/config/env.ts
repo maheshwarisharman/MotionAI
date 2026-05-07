@@ -29,6 +29,12 @@ const envSchema = z.object({
   /** Google Gemini API key */
   GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY is required'),
 
+  /** Supabase project URL */
+  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
+
+  /** Supabase anon/public key */
+  SUPABASE_ANON_KEY: z.string().min(1, 'SUPABASE_ANON_KEY is required'),
+
   /** Maximum number of render jobs to process concurrently */
   MAX_RENDER_CONCURRENT: z
     .string()

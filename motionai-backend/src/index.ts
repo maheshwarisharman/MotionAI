@@ -30,6 +30,7 @@ import { logger } from './utils/logger.js';
 
 // Routes
 import animationRoutes from './routes/animation.routes.js';
+import projectRoutes from './routes/project.routes.js';
 
 // Worker
 import { createRenderWorker } from './workers/render.worker.js';
@@ -95,6 +96,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // ── API routes ───────────────────────────────────────────────────────────────
 app.use('/api/animation', animationRoutes);
+app.use('/api/projects', projectRoutes);
 
 // ── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req: Request, res: Response) => {

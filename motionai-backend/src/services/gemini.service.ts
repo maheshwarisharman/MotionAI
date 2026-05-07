@@ -23,7 +23,7 @@ import { SanitizationError, type EnrichedBrief } from '../types/index.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-const MODEL_NAME = 'gemini-1.5-pro';
+const MODEL_NAME = 'gemini-3-flash-preview';
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1_000;
 
@@ -93,9 +93,26 @@ STRICT RULES:
 10. Use spring() for entrance animations, interpolate() for continuous ones
 11. Use the exact color palette from the creative brief
 12. End the animation gracefully (fade out in the last 1 second)
+13. IMPORTANT: Use ONLY standard ASCII characters for punctuation. Do NOT use full-width characters like "。" or "，".
 
 The output will be directly executed in a Remotion renderer.
 Any syntax error will cause the entire job to fail. Make the code correct on the first try.`;
+
+/**
+ * Minimal system prompt used for edit/refinement calls.
+ * Shorter = fewer tokens consumed on every chat turn.
+ */
+const EDIT_SYSTEM_PROMPT = `You are an expert Remotion/React developer making targeted edits to an animation.
+
+STRICT RULES:
+1. Output ONLY valid TypeScript/TSX. No markdown, no explanation.
+2. Default export must be named "GeneratedAnimation".
+3. Allowed imports ONLY: remotion (useCurrentFrame, useVideoConfig, interpolate, spring, Sequence) and React.
+4. No external URLs or font imports. Use CSS gradients, SVG, inline styles.
+5. All animations tied to useCurrentFrame() via interpolate() or spring().
+6. Fill the full frame using useVideoConfig() width/height.
+7. Under 300 lines. ASCII punctuation only.
+8. Apply ONLY the requested changes — keep everything else the same.`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -111,10 +128,21 @@ async function sleep(ms: number): Promise<void> {
 /**
  * Strips markdown fences from LLM output that may accidentally include them.
  */
-function stripMarkdownFences(text: string): string {
+/**
+ * Strips markdown fences and replaces full-width punctuation that LLMs sometimes hallucinate.
+ */
+function sanitizeGeneratedCode(text: string): string {
   return text
     .replace(/^```(?:json|tsx|typescript)?\s*/i, '')
     .replace(/\s*```$/i, '')
+    .replace(/。/g, '.')
+    .replace(/，/g, ',')
+    .replace(/；/g, ';')
+    .replace(/：/g, ':')
+    .replace(/“/g, '"')
+    .replace(/”/g, '"')
+    .replace(/‘/g, "'")
+    .replace(/’/g, "'")
     .trim();
 }
 
@@ -159,7 +187,7 @@ export class GeminiService {
       'enrichPrompt',
     );
 
-    const cleaned = stripMarkdownFences(rawJson);
+    const cleaned = sanitizeGeneratedCode(rawJson);
 
     let parsed: unknown;
     try {
@@ -196,7 +224,7 @@ export class GeminiService {
       'generateRemotionCode',
     );
 
-    code = stripMarkdownFences(code);
+    code = sanitizeGeneratedCode(code);
 
     // Attempt sanitization — if it fails, retry once with the error context
     try {
@@ -206,7 +234,7 @@ export class GeminiService {
         logger.warn({ msg: 'First code generation failed sanitization, retrying', error: err.message });
 
         const retryMessage = `${userMessage}\n\n--- PREVIOUS ATTEMPT FAILED SANITIZATION ---\nError: ${err.message}\nPlease fix the issue and regenerate.`;
-        code = stripMarkdownFences(
+        code = sanitizeGeneratedCode(
           await this.callWithRetry(
             CODE_GENERATION_SYSTEM_PROMPT,
             retryMessage,
@@ -222,10 +250,61 @@ export class GeminiService {
 
     return code;
   }
+  /**
+   * Generates updated Remotion code for an EDIT request.
+   *
+   * Token-optimised: skips enrichPrompt entirely.
+   * Builds a compact ~200-token context from the stored brief summary
+   * plus the user's edit instruction.
+   *
+   * @param editInstruction - What the user wants to change.
+   * @param context         - Compressed previous brief stored in DB.
+   * @param duration        - Animation duration in seconds.
+   * @param resolution      - Target resolution string.
+   */
+  async generateRemotionCodeFromEdit(
+    editInstruction: string,
+    context: import('../types/index.js').EditContext,
+    duration: number,
+    resolution: string,
+  ): Promise<string> {
+    const [width, height] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
 
-  // -------------------------------------------------------------------------
-  // Private Methods
-  // -------------------------------------------------------------------------
+    const userMessage = [
+      `Current animation summary: ${context.briefSummary}`,
+      `Colors: ${context.colorPalette.join(', ')}`,
+      `Mood: ${context.animationMood} | Font: ${context.fontStyle}`,
+      `Duration: ${duration}s (${duration * 30} frames at 30fps) | Resolution: ${width}x${height}`,
+      ``,
+      `User edit request: ${editInstruction}`,
+    ].join('\n');
+
+    let code = await this.callWithRetry(
+      EDIT_SYSTEM_PROMPT,
+      userMessage,
+      'generateRemotionCodeFromEdit',
+    );
+
+    code = sanitizeGeneratedCode(code);
+
+    try {
+      sanitizeJSX(code);
+    } catch (err) {
+      if (err instanceof SanitizationError) {
+        logger.warn({ msg: 'Edit code failed sanitization, retrying', error: (err as Error).message });
+        const retryMessage = `${userMessage}\n\n--- PREVIOUS ATTEMPT FAILED ---\nError: ${(err as Error).message}\nFix it and regenerate.`;
+        code = sanitizeGeneratedCode(
+          await this.callWithRetry(EDIT_SYSTEM_PROMPT, retryMessage, 'generateRemotionCodeFromEdit-retry'),
+        );
+        sanitizeJSX(code);
+      } else {
+        throw err;
+      }
+    }
+
+    return code;
+  }
+
 
   /**
    * Calls Gemini with exponential backoff retry logic.

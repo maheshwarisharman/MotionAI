@@ -18,6 +18,7 @@
     "@google/generative-ai": "^0.15.0",
     "@remotion/bundler": "^4.0.228",
     "@remotion/renderer": "^4.0.228",
+    "@supabase/supabase-js": "^2.105.3",
     "bullmq": "^5.12.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

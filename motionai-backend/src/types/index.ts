@@ -1,5 +1,8 @@
 /**
  * Shared TypeScript types and interfaces for MotionAI backend.
+ *
+ * Extended with Project / Message / Chat types for the conversation
+ * continuation feature (Supabase-backed).
  */
 
 // ---------------------------------------------------------------------------
@@ -74,6 +77,87 @@ export interface AnimationJobData {
   errorMessage?: string;
   /** Pre-signed download URL stored on completion */
   downloadUrl?: string;
+  /**
+   * Supabase project ID — present on all jobs so the worker can
+   * persist results back to the database.
+   */
+  projectId?: string;
+  /**
+   * Message ID in the messages table that triggered this render.
+   * Used to update the message with the resulting job_id.
+   */
+  triggerMessageId?: string;
+  /**
+   * Compact context string passed to the LLM for edit requests.
+   * Omitted on the first generation (undefined).
+   */
+  editContext?: EditContext;
+}
+
+// ---------------------------------------------------------------------------
+// Project & Chat Domain
+// ---------------------------------------------------------------------------
+
+/** Stored project row in Supabase */
+export interface Project {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+  duration: number;
+  resolution: '720p' | '1080p';
+  latest_job_id: string | null;
+  latest_video_url: string | null;
+  /** Serialised EnrichedBrief — reused for token-efficient edit calls */
+  enriched_brief: EnrichedBrief | null;
+}
+
+/** Stored message row in Supabase */
+export interface Message {
+  id: string;
+  project_id: string;
+  created_at: string;
+  role: 'user' | 'assistant';
+  content: string;
+  job_id: string | null;
+  message_type: 'initial_generate' | 'edit' | 'completion' | 'error';
+}
+
+/** Body shape for POST /api/projects */
+export interface CreateProjectRequest {
+  prompt: string;
+  duration: number;
+  resolution: '720p' | '1080p';
+  style: 'modern' | 'minimal' | 'bold' | 'corporate';
+}
+
+/** Body shape for POST /api/projects/:id/chat */
+export interface ChatRequest {
+  /** User edit message (e.g. "make the background darker") */
+  message: string;
+  /**
+   * Optionally override duration / resolution for this render.
+   * If omitted, the project's existing values are reused.
+   */
+  duration?: number;
+  resolution?: '720p' | '1080p';
+}
+
+/**
+ * Compact context passed from controller → LLM for edit calls.
+ * Keeps token count low by summarising the previous brief rather
+ * than re-sending the full prompt history.
+ */
+export interface EditContext {
+  /** One-line summary of the existing animation */
+  briefSummary: string;
+  /** Hex colors from the previous brief */
+  colorPalette: string[];
+  /** Mood tag */
+  animationMood: string;
+  /** Font style */
+  fontStyle: 'sans-serif' | 'monospace' | 'serif' | 'display';
 }
 
 // ---------------------------------------------------------------------------
