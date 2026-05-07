@@ -44,7 +44,18 @@ The `render.worker.ts` orchestrates the lifecycle of a job. **Maintain this prog
 - **Symlink node_modules:** The `render.service.ts` symlinks the main `node_modules` into the temp directory instead of copying them. Do not change this to a copy operation; it will kill disk I/O and storage.
 - **Concurrency:** Limited by `MAX_RENDER_CONCURRENT` in `.env`.
 
+### 4. Realtime / WebSocket Architecture
+- **Transport:** The backend exposes a WebSocket server at `/ws`, attached to the same HTTP server in `src/index.ts`.
+- **Scale-safe fanout:** Realtime delivery uses Redis pub/sub via `src/services/realtime.service.ts`, so websocket events can fan out across multiple backend instances.
+- **Subscription model:** Clients subscribe by `jobId` or `projectId` using JSON websocket messages such as `subscribe_job` and `subscribe_project`.
+- **Initial snapshot:** Project subscribers receive a `project.snapshot` event containing the project, its message history, and the latest job status when available.
+- **Lifecycle events:** The backend emits `render.job.queued`, `render.job.progress`, `render.job.completed`, `render.job.failed`, `project.updated`, and `project.message.created`.
+- **Source of truth:** Queue/job state is mapped centrally in `src/services/job-status.service.ts` so HTTP polling and websocket updates stay consistent.
+- **Worker integration:** `src/workers/render.worker.ts` publishes realtime progress for the existing render milestones, then emits completion/failure events after persistence.
+- **Frontend use case:** This layer is used to deliver the final `downloadUrl` as soon as rendering completes and to stream updates for continuation/chat edits on existing projects.
+
 ---
+
 
 ## ✅ Dos
 - **Use `GeminiService`:** Always use the built-in retry logic and sanitization feedback loop.
