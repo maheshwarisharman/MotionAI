@@ -64,6 +64,7 @@ app.use(
   cors({
     origin: env.NODE_ENV === "development" ? "*" : undefined,
     methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 

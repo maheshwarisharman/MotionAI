@@ -35,6 +35,11 @@ const envSchema = z.object({
   /** Supabase anon/public key */
   SUPABASE_ANON_KEY: z.string().min(1, 'SUPABASE_ANON_KEY is required'),
 
+  /** Supabase service role key used for backend-owned database access */
+  SUPABASE_SERVICE_ROLE_KEY: z
+    .string()
+    .min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
+
   /** Maximum number of render jobs to process concurrently */
   MAX_RENDER_CONCURRENT: z
     .string()

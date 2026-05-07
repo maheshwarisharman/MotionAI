@@ -125,6 +125,7 @@ export interface Project {
   id: string;
   created_at: string;
   updated_at: string;
+  user_id: string | null;
   title: string;
   style: "modern" | "minimal" | "bold" | "corporate";
   duration: number;
@@ -144,6 +145,13 @@ export interface Message {
   content: string;
   job_id: string | null;
   message_type: "initial_generate" | "edit" | "completion" | "error";
+}
+
+/** Minimal authenticated Supabase user context used by the backend. */
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  isAnonymous: boolean;
 }
 
 /** Body shape for POST /api/projects */

@@ -21,11 +21,13 @@ export class DatabaseService {
     style: Project["style"];
     duration: number;
     resolution: Project["resolution"];
+    userId?: string | null;
   }): Promise<Project> {
     const db = getSupabaseClient();
     const { data: row, error } = await db
       .from("projects")
       .insert({
+        user_id: data.userId ?? null,
         title: data.title,
         style: data.style,
         duration: data.duration,
@@ -61,13 +63,44 @@ export class DatabaseService {
   }
 
   /**
+   * Retrieves a project only if it is accessible to the requesting user.
+   * Anonymous users may only access anonymous projects.
+   * Authenticated users may access their own projects and anonymous projects.
+   */
+  async getAccessibleProject(
+    projectId: string,
+    userId?: string | null,
+  ): Promise<Project | null> {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return null;
+    }
+
+    if (!project.user_id) {
+      return project;
+    }
+
+    if (userId && project.user_id === userId) {
+      return project;
+    }
+
+    return null;
+  }
+
+  /**
    * Lists all projects ordered by most recently updated.
    */
-  async listProjects(limit = 20, offset = 0): Promise<Project[]> {
+  async listProjectsForUser(
+    userId: string,
+    limit = 20,
+    offset = 0,
+  ): Promise<Project[]> {
     const db = getSupabaseClient();
     const { data: rows, error } = await db
       .from("projects")
       .select("*")
+      .eq("user_id", userId)
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 

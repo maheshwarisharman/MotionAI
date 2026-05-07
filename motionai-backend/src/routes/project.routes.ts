@@ -4,8 +4,13 @@
 
 import { Router } from 'express';
 import { projectController } from '../controllers/project.controller.js';
+import { optionalSupabaseAuth } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+router.use((req, res, next) => {
+  optionalSupabaseAuth(req, res, next);
+});
 
 /** POST /api/projects — create project + first generation */
 router.post('/', (req, res, next) => projectController.create(req, res, next));

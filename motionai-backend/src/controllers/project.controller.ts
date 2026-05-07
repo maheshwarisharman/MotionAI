@@ -148,6 +148,7 @@ export class ProjectController {
         style: body.style,
         duration: body.duration,
         resolution: body.resolution,
+        userId: req.authUser?.id ?? null,
       });
 
       // 2. Persist user message
@@ -243,7 +244,19 @@ export class ProjectController {
       );
       const offset = parseInt((req.query["offset"] as string) ?? "0", 10);
 
-      const projects = await databaseService.listProjects(limit, offset);
+      if (!req.authUser) {
+        res.status(401).json({
+          error: "Authentication required to view project history",
+          requestId: res.locals["requestId"],
+        });
+        return;
+      }
+
+      const projects = await databaseService.listProjectsForUser(
+        req.authUser.id,
+        limit,
+        offset,
+      );
       res.status(200).json({ projects, limit, offset });
     } catch (err) {
       next(err);
@@ -258,21 +271,20 @@ export class ProjectController {
     try {
       const { projectId } = req.params as { projectId: string };
 
-      const [project, messages] = await Promise.all([
-        databaseService.getProject(projectId),
-        databaseService.getMessages(projectId),
-      ]);
+      const project = await databaseService.getAccessibleProject(
+        projectId,
+        req.authUser?.id ?? null,
+      );
 
       if (!project) {
-        res
-          .status(404)
-          .json({
-            error: `Project "${projectId}" not found`,
-            requestId: res.locals["requestId"],
-          });
+        res.status(404).json({
+          error: `Project "${projectId}" not found`,
+          requestId: res.locals["requestId"],
+        });
         return;
       }
 
+      const messages = await databaseService.getMessages(projectId);
       res.status(200).json({ project, messages });
     } catch (err) {
       next(err);
@@ -317,7 +329,10 @@ export class ProjectController {
       const body = parse.data as ChatRequest;
 
       // Load project
-      const project = await databaseService.getProject(projectId);
+      const project = await databaseService.getAccessibleProject(
+        projectId,
+        req.authUser?.id ?? null,
+      );
       if (!project) {
         res
           .status(404)
