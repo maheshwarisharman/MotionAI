@@ -14,12 +14,38 @@ import {
 } from "../services/job-status.service.js";
 import { publishRealtimeEvent } from "../services/realtime.service.js";
 import { logger } from "../utils/logger.js";
-import type { AnimationRequest, AnimationJobData } from "../types/index.js";
+import type {
+  AnimationRequest,
+  AnimationJobData,
+  ReferenceImageInput,
+} from "../types/index.js";
 
 // ---------------------------------------------------------------------------
 // Validation Schema
 
 // ---------------------------------------------------------------------------
+
+const referenceImageSchema = z
+  .object({
+    name: z.string().min(1).max(120).optional(),
+    url: z.string().url().optional(),
+    dataUrl: z
+      .string()
+      .regex(
+        /^data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+$/u,
+        "referenceImages dataUrl must be a base64 image data URL",
+      )
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    const count = Number(Boolean(value.url)) + Number(Boolean(value.dataUrl));
+    if (count !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Each reference image must include exactly one of "url" or "dataUrl"',
+      });
+    }
+  });
 
 const animationRequestSchema = z.object({
   prompt: z
@@ -39,6 +65,7 @@ const animationRequestSchema = z.object({
       message: "Style must be one of: modern, minimal, bold, corporate",
     }),
   }),
+  referenceImages: z.array(referenceImageSchema).max(5).optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -80,6 +107,7 @@ export class AnimationController {
         duration: body.duration,
         resolution: body.resolution,
         style: body.style,
+        referenceImages: body.referenceImages as ReferenceImageInput[] | undefined,
       };
 
       const job = await renderQueue.add(jobId, jobData, { jobId });

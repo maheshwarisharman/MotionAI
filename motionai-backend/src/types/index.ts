@@ -19,6 +19,26 @@ export interface AnimationRequest {
   resolution: "720p" | "1080p";
   /** Visual style applied to the animation */
   style: "modern" | "minimal" | "bold" | "corporate";
+  /** Optional reference images supplied with the prompt */
+  referenceImages?: ReferenceImageInput[];
+}
+
+/** Image input accepted by the API. */
+export interface ReferenceImageInput {
+  /** Optional original filename for extension/name preservation */
+  name?: string;
+  /** Public image URL */
+  url?: string;
+  /** Inline base64 data URL */
+  dataUrl?: string;
+}
+
+/** Fully prepared image ready for Gemini + Remotion consumption. */
+export interface PreparedReferenceImage {
+  filename: string;
+  mimeType: string;
+  buffer: Buffer;
+  base64Data: string;
 }
 
 /** Union of all possible status response shapes */
@@ -73,6 +93,8 @@ export interface AnimationJobData {
   style: "modern" | "minimal" | "bold" | "corporate";
   /** Unique job identifier (same as BullMQ job ID) */
   jobId: string;
+  /** Optional reference images supplied with this prompt */
+  referenceImages?: ReferenceImageInput[];
   /** Human-readable error captured on failure */
   errorMessage?: string;
   /** Pre-signed download URL stored on completion */
@@ -130,12 +152,15 @@ export interface CreateProjectRequest {
   duration: number;
   resolution: "720p" | "1080p";
   style: "modern" | "minimal" | "bold" | "corporate";
+  referenceImages?: ReferenceImageInput[];
 }
 
 /** Body shape for POST /api/projects/:id/chat */
 export interface ChatRequest {
   /** User edit message (e.g. "make the background darker") */
   message: string;
+  /** Optional images to include in this specific edit render */
+  referenceImages?: ReferenceImageInput[];
   /**
    * Optionally override duration / resolution for this render.
    * If omitted, the project's existing values are reused.
@@ -197,6 +222,8 @@ export interface RenderOptions {
   duration: number;
   /** Output resolution */
   resolution: "720p" | "1080p";
+  /** Optional prepared image assets that should be written into the job folder */
+  referenceImages?: PreparedReferenceImage[];
   /** Callback invoked with render progress 0–100 */
   onProgress: (progress: number) => void;
 }

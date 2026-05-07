@@ -17,7 +17,11 @@ import {
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { sanitizeJSX } from '../utils/sanitize.js';
-import { SanitizationError, type EnrichedBrief } from '../types/index.js';
+import {
+  SanitizationError,
+  type EnrichedBrief,
+  type PreparedReferenceImage,
+} from '../types/index.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -73,6 +77,7 @@ Rules:
 - colorPalette must contain 4–6 hex color codes that match the requested style.
 - fontStyle must be one of: "sans-serif", "monospace", "serif", "display".
 - keyScenes must map the animation duration with each scene having a unique startSecond.
+- If reference images are provided, preserve their subject identity and visual cues in the brief.
 
 Output ONLY the JSON. No markdown, no explanation.`;
 
@@ -84,7 +89,8 @@ STRICT RULES:
 3. Use ONLY these allowed imports (they will be available at runtime):
    - import { useCurrentFrame, useVideoConfig, interpolate, spring, Sequence } from 'remotion'
    - import React from 'react'
-4. NO external image URLs. Use only CSS gradients, SVG shapes, and inline styles.
+   - Relative image imports from './assets/<filename>' when reference images are provided
+4. NEVER use external image URLs. If images are available, import them from ./assets and animate them with standard <img> tags.
 5. NO external font imports. Use the fontStyle from the brief as a CSS font-family.
 6. All animations MUST use interpolate() or spring() tied to useCurrentFrame()
 7. The component must fill a full frame using width and height from useVideoConfig()
@@ -94,6 +100,7 @@ STRICT RULES:
 11. Use the exact color palette from the creative brief
 12. End the animation gracefully (fade out in the last 1 second)
 13. IMPORTANT: Use ONLY standard ASCII characters for punctuation. Do NOT use full-width characters like "。" or "，".
+14. If reference images are provided, treat them as primary visual assets and include them in the composition rather than replacing them with abstract placeholders.
 
 The output will be directly executed in a Remotion renderer.
 Any syntax error will cause the entire job to fail. Make the code correct on the first try.`;
@@ -107,12 +114,13 @@ const EDIT_SYSTEM_PROMPT = `You are an expert Remotion/React developer making ta
 STRICT RULES:
 1. Output ONLY valid TypeScript/TSX. No markdown, no explanation.
 2. Default export must be named "GeneratedAnimation".
-3. Allowed imports ONLY: remotion (useCurrentFrame, useVideoConfig, interpolate, spring, Sequence) and React.
-4. No external URLs or font imports. Use CSS gradients, SVG, inline styles.
+3. Allowed imports ONLY: remotion (useCurrentFrame, useVideoConfig, interpolate, spring, Sequence), React, and relative image imports from ./assets/<filename> when provided.
+4. No external URLs or font imports. Use CSS gradients, SVG, inline styles, and local image assets.
 5. All animations tied to useCurrentFrame() via interpolate() or spring().
 6. Fill the full frame using useVideoConfig() width/height.
 7. Under 300 lines. ASCII punctuation only.
-8. Apply ONLY the requested changes — keep everything else the same.`;
+8. Apply ONLY the requested changes — keep everything else the same.
+9. If reference images are provided, preserve and animate them rather than replacing them with abstract stand-ins.`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,12 +186,13 @@ export class GeminiService {
     rawPrompt: string,
     style: string,
     duration: number,
+    referenceImages: PreparedReferenceImage[] = [],
   ): Promise<EnrichedBrief> {
     const userMessage = `Style: ${style}\nDuration: ${duration} seconds\n\nUser request:\n${rawPrompt}`;
 
     const rawJson = await this.callWithRetry(
       ENRICH_SYSTEM_PROMPT,
-      userMessage,
+      this.buildUserParts(userMessage, referenceImages),
       'enrichPrompt',
     );
 
@@ -215,12 +224,18 @@ export class GeminiService {
     brief: EnrichedBrief,
     duration: number,
     resolution: string,
+    referenceImages: PreparedReferenceImage[] = [],
   ): Promise<string> {
-    const userMessage = this.buildCodeGenPrompt(brief, duration, resolution);
+    const userMessage = this.buildCodeGenPrompt(
+      brief,
+      duration,
+      resolution,
+      referenceImages,
+    );
 
     let code = await this.callWithRetry(
       CODE_GENERATION_SYSTEM_PROMPT,
-      userMessage,
+      this.buildUserParts(userMessage, referenceImages),
       'generateRemotionCode',
     );
 
@@ -237,7 +252,7 @@ export class GeminiService {
         code = sanitizeGeneratedCode(
           await this.callWithRetry(
             CODE_GENERATION_SYSTEM_PROMPT,
-            retryMessage,
+            this.buildUserParts(retryMessage, referenceImages),
             'generateRemotionCode-retry',
           ),
         );
@@ -267,6 +282,7 @@ export class GeminiService {
     context: import('../types/index.js').EditContext,
     duration: number,
     resolution: string,
+    referenceImages: PreparedReferenceImage[] = [],
   ): Promise<string> {
     const [width, height] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
 
@@ -275,13 +291,14 @@ export class GeminiService {
       `Colors: ${context.colorPalette.join(', ')}`,
       `Mood: ${context.animationMood} | Font: ${context.fontStyle}`,
       `Duration: ${duration}s (${duration * 30} frames at 30fps) | Resolution: ${width}x${height}`,
+      this.buildReferenceImageText(referenceImages),
       ``,
       `User edit request: ${editInstruction}`,
     ].join('\n');
 
     let code = await this.callWithRetry(
       EDIT_SYSTEM_PROMPT,
-      userMessage,
+      this.buildUserParts(userMessage, referenceImages),
       'generateRemotionCodeFromEdit',
     );
 
@@ -294,7 +311,11 @@ export class GeminiService {
         logger.warn({ msg: 'Edit code failed sanitization, retrying', error: (err as Error).message });
         const retryMessage = `${userMessage}\n\n--- PREVIOUS ATTEMPT FAILED ---\nError: ${(err as Error).message}\nFix it and regenerate.`;
         code = sanitizeGeneratedCode(
-          await this.callWithRetry(EDIT_SYSTEM_PROMPT, retryMessage, 'generateRemotionCodeFromEdit-retry'),
+          await this.callWithRetry(
+            EDIT_SYSTEM_PROMPT,
+            this.buildUserParts(retryMessage, referenceImages),
+            'generateRemotionCodeFromEdit-retry',
+          ),
         );
         sanitizeJSX(code);
       } else {
@@ -315,7 +336,10 @@ export class GeminiService {
    */
   private async callWithRetry(
     systemPrompt: string,
-    userMessage: string,
+    parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    >,
     context: string,
   ): Promise<string> {
     let lastError: Error | undefined;
@@ -326,7 +350,7 @@ export class GeminiService {
 
         const result = await this.model.generateContent({
           systemInstruction: systemPrompt,
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          contents: [{ role: 'user', parts }],
         });
 
         const candidate = result.response.candidates?.[0];
@@ -371,6 +395,7 @@ export class GeminiService {
     brief: EnrichedBrief,
     duration: number,
     resolution: string,
+    referenceImages: PreparedReferenceImage[],
   ): string {
     const [width, height] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
     return [
@@ -381,6 +406,7 @@ export class GeminiService {
       `Animation Mood: ${brief.animationMood}`,
       `Duration: ${duration} seconds (${duration * 30} frames at 30fps)`,
       `Resolution: ${width}x${height} (${resolution})`,
+      this.buildReferenceImageText(referenceImages),
       ``,
       `Key Scenes:`,
       ...brief.keyScenes.map(
@@ -388,6 +414,41 @@ export class GeminiService {
           `  - ${s.startSecond}s: ${s.description} [elements: ${s.elements.join(', ')}]`,
       ),
     ].join('\n');
+  }
+
+  private buildReferenceImageText(referenceImages: PreparedReferenceImage[]): string {
+    if (!referenceImages.length) {
+      return 'Reference Images: none';
+    }
+
+    return [
+      'Reference Images:',
+      ...referenceImages.map(
+        (image, index) =>
+          `- Image ${index + 1}: available as ./assets/${image.filename}`,
+      ),
+      'If you use these assets, import them exactly from the listed ./assets paths.',
+    ].join('\n');
+  }
+
+  private buildUserParts(
+    text: string,
+    referenceImages: PreparedReferenceImage[],
+  ): Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> {
+    const parts: Array<
+      { text: string } | { inlineData: { mimeType: string; data: string } }
+    > = [{ text }];
+
+    for (const image of referenceImages) {
+      parts.push({
+        inlineData: {
+          mimeType: image.mimeType,
+          data: image.base64Data,
+        },
+      });
+    }
+
+    return parts;
   }
 
   /**

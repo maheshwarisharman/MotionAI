@@ -15,6 +15,7 @@ import fs from 'fs';
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition } from '@remotion/renderer';
 import { env } from '../config/env.js';
+import { referenceImageService } from './reference-image.service.js';
 import { logger } from '../utils/logger.js';
 import type { RenderOptions } from '../types/index.js';
 
@@ -77,7 +78,8 @@ export class RenderService {
    * @throws If bundling or rendering fails.
    */
   async render(options: RenderOptions): Promise<string> {
-    const { jobId, tsxCode, duration, resolution, onProgress } = options;
+    const { jobId, tsxCode, duration, resolution, referenceImages, onProgress } =
+      options;
 
     const jobDir = path.join(env.TEMP_DIR, jobId);
     const componentPath = path.join(jobDir, COMPONENT_FILENAME);
@@ -94,6 +96,11 @@ export class RenderService {
     // Step 2: Write generated component
     fs.writeFileSync(componentPath, tsxCode, 'utf8');
     logger.debug({ msg: 'Wrote GeneratedAnimation.tsx', componentPath });
+
+    // Step 2b: Write any user-supplied reference images into ./assets
+    if (referenceImages?.length) {
+      referenceImageService.writeImagesToJobDirectory(jobDir, referenceImages);
+    }
 
     // Step 3: Write Remotion entry file
     const entryContent = buildEntryFile(duration, resolution);

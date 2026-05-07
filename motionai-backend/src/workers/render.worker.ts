@@ -31,6 +31,7 @@ import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { geminiService } from "../services/gemini.service.js";
 import { renderService } from "../services/render.service.js";
+import { referenceImageService } from "../services/reference-image.service.js";
 import { storageService } from "../services/storage.service.js";
 import { databaseService } from "../services/database.service.js";
 import { inferRenderStage } from "../services/job-status.service.js";
@@ -80,8 +81,16 @@ async function safePublishRealtimeEvent(
 // ---------------------------------------------------------------------------
 
 async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
-  const { jobId, prompt, style, duration, resolution, projectId, editContext } =
-    job.data;
+  const {
+    jobId,
+    prompt,
+    style,
+    duration,
+    resolution,
+    projectId,
+    editContext,
+    referenceImages,
+  } = job.data;
   const isEditMode = !!editContext;
   let lastPublishedProgress = -1;
 
@@ -118,12 +127,20 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
   // ── Step 1: Enrich prompt OR use cached brief ────────────────────────────
   await publishJobProgress(5);
 
+  const preparedReferenceImages =
+    await referenceImageService.prepareImages(referenceImages);
+
   let enrichedBrief: EnrichedBrief | null = null;
 
   if (!isEditMode) {
     // Full pipeline — 2 LLM calls
     logger.info({ msg: "Enriching prompt", jobId });
-    enrichedBrief = await geminiService.enrichPrompt(prompt, style, duration);
+    enrichedBrief = await geminiService.enrichPrompt(
+      prompt,
+      style,
+      duration,
+      preparedReferenceImages,
+    );
     logger.info({
       msg: "Prompt enriched",
       jobId,
@@ -152,6 +169,7 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
       editContext,
       duration,
       resolution,
+      preparedReferenceImages,
     );
   } else if (enrichedBrief) {
     // 2 LLM calls — standard path
@@ -159,6 +177,7 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
       enrichedBrief,
       duration,
       resolution,
+      preparedReferenceImages,
     );
   } else {
     throw new Error("Neither enrichedBrief nor editContext is available");
@@ -195,6 +214,7 @@ async function processRenderJob(job: Job<AnimationJobData>): Promise<string> {
     tsxCode,
     duration,
     resolution,
+    referenceImages: preparedReferenceImages,
     onProgress: async (renderPercent) => {
       await publishJobProgress(mapRenderProgress(renderPercent));
     },

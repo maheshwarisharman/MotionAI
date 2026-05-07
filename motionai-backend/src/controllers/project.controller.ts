@@ -28,21 +28,46 @@ import type {
   ChatRequest,
   EditContext,
   EnrichedBrief,
+  ReferenceImageInput,
 } from "../types/index.js";
 
 // ---------------------------------------------------------------------------
 // Validation schemas
 // ---------------------------------------------------------------------------
 
+const referenceImageSchema = z
+  .object({
+    name: z.string().min(1).max(120).optional(),
+    url: z.string().url().optional(),
+    dataUrl: z
+      .string()
+      .regex(
+        /^data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+$/u,
+        "referenceImages dataUrl must be a base64 image data URL",
+      )
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    const count = Number(Boolean(value.url)) + Number(Boolean(value.dataUrl));
+    if (count !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Each reference image must include exactly one of "url" or "dataUrl"',
+      });
+    }
+  });
+
 const createProjectSchema = z.object({
   prompt: z.string().min(10).max(1000),
   duration: z.number().int().min(3).max(60),
   resolution: z.enum(["720p", "1080p"]),
   style: z.enum(["modern", "minimal", "bold", "corporate"]),
+  referenceImages: z.array(referenceImageSchema).max(5).optional(),
 });
 
 const chatSchema = z.object({
   message: z.string().min(3).max(1000),
+  referenceImages: z.array(referenceImageSchema).max(5).optional(),
   duration: z.number().int().min(3).max(60).optional(),
   resolution: z.enum(["720p", "1080p"]).optional(),
 });
@@ -150,6 +175,7 @@ export class ProjectController {
         style: body.style,
         projectId: project.id,
         triggerMessageId: userMessage.id,
+        referenceImages: body.referenceImages as ReferenceImageInput[] | undefined,
       };
 
       const job = await renderQueue.add(jobId, jobData, { jobId });
@@ -337,6 +363,7 @@ export class ProjectController {
         projectId,
         triggerMessageId: userMessage.id,
         editContext, // presence of this tells the worker to skip enrichPrompt
+        referenceImages: body.referenceImages as ReferenceImageInput[] | undefined,
       };
 
       const job = await renderQueue.add(jobId, jobData, { jobId });
